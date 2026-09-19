@@ -192,6 +192,21 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Parken: GETHOMEPOS → SETPOSDG auf Hom-Winkel (AZ). */
+    fun parkAzimuth() {
+        val gen = ++motionGen
+        repo.beginUserCommand()
+        motionJob?.cancel()
+        motionJob = viewModelScope.launch {
+            try {
+                runCatching { repo.parkAzimuth() }
+            } finally {
+                if (gen == motionGen) repo.endUserCommand()
+            }
+            startPolling()
+        }
+    }
+
     fun setElevation(deg: Double) {
         val gen = ++motionGen
         repo.beginUserCommand()
@@ -314,6 +329,12 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             store.setHeatmapScale(custom, thrBlue, normMin, normMax, thrRed)
+        }
+    }
+
+    fun setLocation(lat: Double, lon: Double, locator: String = "") {
+        viewModelScope.launch {
+            store.setLocation(lat, lon, locator)
         }
     }
 

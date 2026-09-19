@@ -18,6 +18,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import de.dk8de.rotorapp.ui.ControlScreen
+import de.dk8de.rotorapp.ui.MapScreen
 import de.dk8de.rotorapp.ui.ProfilesScreen
 import de.dk8de.rotorapp.ui.RotorViewModel
 import de.dk8de.rotorapp.ui.theme.RotorAppTheme
@@ -78,8 +79,16 @@ class MainActivity : ComponentActivity() {
                             onRefreshTemps = vm::refreshTemps,
                             onSelectAntenna = vm::selectAntenna,
                             onResetDwell = vm::resetDwellTimes,
-                            onResetAccBins = vm::resetAccBins,
+                            onParkAzimuth = vm::parkAzimuth,
                             onOpenProfiles = { nav.navigate("profiles") },
+                            onOpenMap = { nav.navigate("map") },
+                        )
+                    }
+                    composable("map") {
+                        MapScreen(
+                            state = state,
+                            onBack = { nav.popBackStack() },
+                            onMapClickBearing = vm::setAzimuth,
                         )
                     }
                     composable("profiles") {
@@ -101,6 +110,9 @@ class MainActivity : ComponentActivity() {
                                 vm.setHeatmapScale(custom, tb, nm, nx, tr)
                             },
                             onHeatmapFromBins = vm::applyHeatmapFromCurrentBins,
+                            onLocationSave = { lat, lon, loc ->
+                                vm.setLocation(lat, lon, loc)
+                            },
                         )
                     }
                 }

@@ -15,8 +15,8 @@ package de.dk8de.rotorapp
  * Copyright (c) DK8DE
  */
 object AppVersion {
-    const val MAJOR = 0
-    const val MINOR = 1
+    const val MAJOR = 1
+    const val MINOR = 0
     const val PATCH = 0
 
     /** Anzeige-String, z. B. `"0.1.0"`. */

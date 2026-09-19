@@ -80,6 +80,7 @@ fun ProfilesScreen(
     onHeatmapCustomChange: (Boolean) -> Unit,
     onHeatmapScaleSave: (custom: Boolean, thrBlue: Int, normMin: Int, normMax: Int, thrRed: Int) -> Unit,
     onHeatmapFromBins: () -> Unit,
+    onLocationSave: (lat: Double, lon: Double, locator: String) -> Unit,
 ) {
     var editing by remember { mutableStateOf<RotorProfile?>(null) }
 
@@ -274,8 +275,92 @@ fun ProfilesScreen(
                 )
             }
 
+            // —— Standort (Karte) ——
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Standort (Karte)",
+                    color = BridgeAccent,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+                Text(
+                    "QTH für Beam und Kartenklick-Peilung",
+                    color = BridgeMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+                )
+                LocationEditor(
+                    lat = state.displayPrefs.locationLat,
+                    lon = state.displayPrefs.locationLon,
+                    locator = state.displayPrefs.locationLocator,
+                    onSave = onLocationSave,
+                )
+            }
+
             // —— Ende Einstellungen ——
         }
+    }
+}
+
+@Composable
+private fun LocationEditor(
+    lat: Double,
+    lon: Double,
+    locator: String,
+    onSave: (lat: Double, lon: Double, locator: String) -> Unit,
+) {
+    var latText by remember(lat) { mutableStateOf("%.6f".format(lat)) }
+    var lonText by remember(lon) { mutableStateOf("%.6f".format(lon)) }
+    var locText by remember(locator) { mutableStateOf(locator) }
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        ProfileField(
+            value = latText,
+            onValueChange = {
+                latText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' || ch == '-' }
+            },
+            label = "Breite (°)",
+            keyboardType = KeyboardType.Decimal,
+            keyboardActions = KeyboardActions(),
+        )
+        ProfileField(
+            value = lonText,
+            onValueChange = {
+                lonText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' || ch == '-' }
+            },
+            label = "Länge (°)",
+            keyboardType = KeyboardType.Decimal,
+            keyboardActions = KeyboardActions(),
+        )
+        ProfileField(
+            value = locText,
+            onValueChange = { locText = it.uppercase().filter { ch -> ch.isLetterOrDigit() } },
+            label = "Maidenhead-Locator (optional)",
+            keyboardActions = KeyboardActions(),
+        )
+        BridgeButton(
+            text = "STANDORT SPEICHERN",
+            onClick = {
+                val loc = locText.trim()
+                val fromLoc = de.dk8de.rotorapp.geo.GeoUtils.maidenheadToLatLon(loc)
+                val finalLat: Double
+                val finalLon: Double
+                if (fromLoc != null && loc.isNotEmpty()) {
+                    finalLat = fromLoc.first
+                    finalLon = fromLoc.second
+                    latText = "%.6f".format(finalLat)
+                    lonText = "%.6f".format(finalLon)
+                } else {
+                    finalLat = latText.replace(',', '.').toDoubleOrNull() ?: lat
+                    finalLon = lonText.replace(',', '.').toDoubleOrNull() ?: lon
+                }
+                onSave(finalLat, finalLon, loc)
+            },
+            compact = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+        )
     }
 }
 

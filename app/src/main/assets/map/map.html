@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="leaflet.css">
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; background:#e8e8e8; overflow:hidden; }
+    #map { position:absolute; top:0; left:0; right:0; bottom:0; width:100%; height:100%; }
+    .info {
+      position:absolute; z-index:1000; left:8px; bottom:8px; right:8px;
+      background:rgba(28,28,28,0.88); color:#e8e8e8; padding:8px 10px;
+      border-radius:8px; font:12px/1.35 sans-serif; pointer-events:none;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="info" id="infoMain">Karte wird geladen…</div>
+  <script src="leaflet.min.js"></script>
+  <script src="maidenhead.js"></script>
+  <script>
+    (function() {
+      if (typeof L === 'undefined') {
+        document.getElementById('infoMain').textContent = 'Leaflet konnte nicht geladen werden.';
+        return;
+      }
+      if (typeof L.maidenhead !== 'function') {
+        document.getElementById('infoMain').textContent = 'Maidenhead-Plugin fehlt.';
+        return;
+      }
+
+      const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+      const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+      const MAP_DARK = false; // OSM-Hellkarte
+
+      let stationLat = 49.502651;
+      let stationLon = 8.375019;
+      let marker = null;
+      let clickMarker = null;
+      let beamLayers = [];
+      let targetLine = null;
+
+      window.map = L.map('map', {
+        zoomControl: true,
+        attributionControl: true,
+        preferCanvas: true,
+        maxZoom: 19,
+        minZoom: 3
+      }).setView([stationLat, stationLon], 7);
+
+      L.tileLayer(TILE_URL, {
+        maxZoom: 19,
+        minZoom: 3,
+        attribution: ATTRIBUTION,
+        crossOrigin: true
+      }).addTo(window.map);
+
+      // --- Maidenhead-Locator-Overlay (wie Bridge map_html.py) ---
+      let locatorLayer = null;
+      let locatorLabelLayer = null;
+      let locatorVisible = false;
+      let _mapDark = MAP_DARK;
+      let _locPrec = 2, _locDispLen = 2;
+      let _currentLocatorKey = '';
+      let _lastLocatorCheck = 0;
+
+      function _locatorFineZoomFrom() {
+        return Math.max(3, window.map.getMaxZoom() - 3);
+      }
+      function _precisionForZoom(z) {
+        const zFine = _locatorFineZoomFrom();
+        if (z < 7) return 2;
+        if (z < 12) return 4;
+        if (z < zFine) return 6;
+        return 8;
+      }
+      function _displayLengthForZoom(z) {
+        const zFine = _locatorFineZoomFrom();
+        if (z < 3) return 1;
+        if (z < 7) return 2;
+        if (z < 12) return 4;
+        if (z < zFine) return 6;
+        return 8;
+      }
+      function _cellSize(prec) {
+        if (prec === 2) return {lat: 10, lng: 20};
+        if (prec === 4) return {lat: 1, lng: 2};
+        if (prec === 6) return {lat: 2.5/60, lng: 5/60};
+        return {lat: 0.25/60, lng: 0.5/60};
+      }
+      function _createLocatorGridLayer(isDark, precision) {
+        return L.maidenhead({
+          precision: precision,
+          polygonStyle: {
+            color: isDark ? '#b0b0b0' : '#333',
+            weight: 0.5,
+            fill: true,
+            fillColor: 'transparent',
+            fillOpacity: 0
+          },
+          spawnMarker: function() {
+            return L.marker([0, 0], { opacity: 0, interactive: false, keyboard: false });
+          }
+        });
+      }
+      function _updateLocatorLabels() {
+        if (!locatorLabelLayer || !locatorVisible) return;
+        locatorLabelLayer.clearLayers();
+        const cs = _cellSize(_locPrec);
+        const b = window.map.getBounds();
+        const ne = b.getNorthEast();
+        const sw = b.getSouthWest();
+        const mc = window.map.getCenter();
+        const fg = _mapDark ? '#e0e0e0' : '#333';
+        const shadow = _mapDark
+          ? '0 0 2px #000, 0 0 4px #000, 1px 1px 1px #000'
+          : '0 0 2px #fff, 0 0 4px #fff, 1px 1px 1px #fff';
+        const style = "display:inline-block; white-space:nowrap; background:transparent; color:" + fg +
+          "; text-shadow:" + shadow +
+          "; padding:1px 4px; font:bold 16px monospace; line-height:1.2;" +
+          " transform:translate(-50%,-50%); pointer-events:none;";
+        function addLabel(lat, lng, cellCenterLat, cellCenterLng) {
+          if (cellCenterLat < -90 || cellCenterLat > 90) return;
+          const text = L.Maidenhead.latLngToIndex(cellCenterLat, cellCenterLng, _locPrec)
+            .substring(0, _locDispLen).toUpperCase();
+          locatorLabelLayer.addLayer(L.marker([lat, lng], {
+            icon: L.divIcon({
+              html: "<div style='" + style + "'>" + text + "</div>",
+              iconSize: [0, 0],
+              iconAnchor: [0, 0]
+            }),
+            interactive: false,
+            keyboard: false
+          }));
+        }
+        const ctrRowIdx = Math.floor(mc.lat / cs.lat);
+        const ctrColIdx = Math.floor(mc.lng / cs.lng);
+        let centerCellLabeled = false;
+        const lat0 = Math.floor(sw.lat / cs.lat) * cs.lat;
+        const lng0 = Math.floor(sw.lng / cs.lng) * cs.lng;
+        for (let r = lat0; r <= ne.lat + cs.lat; r += cs.lat) {
+          for (let c = lng0; c <= ne.lng + cs.lng; c += cs.lng) {
+            const clat = r + cs.lat / 2;
+            const clng = c + cs.lng / 2;
+            if (clat <= sw.lat || clat >= ne.lat) continue;
+            if (clng <= sw.lng || clng >= ne.lng) continue;
+            addLabel(clat, clng, clat, clng);
+            const rowIdx = Math.round(r / cs.lat);
+            const colIdx = Math.round(c / cs.lng);
+            if (rowIdx === ctrRowIdx && colIdx === ctrColIdx) centerCellLabeled = true;
+          }
+        }
+        if (!centerCellLabeled) {
+          const cellS = ctrRowIdx * cs.lat;
+          const cellCLat = cellS + cs.lat / 2;
+          const cellCLng = ctrColIdx * cs.lng + cs.lng / 2;
+          addLabel(mc.lat, mc.lng, cellCLat, cellCLng);
+        }
+      }
+      function _updateLocatorPrecision() {
+        if (!locatorVisible || !window.map) return;
+        const z = window.map.getZoom();
+        const prec = _precisionForZoom(z);
+        const dispLen = _displayLengthForZoom(z);
+        const key = window.map.getMaxZoom() + '-' + prec + '-' + dispLen;
+        if (key === _currentLocatorKey && locatorLayer) return;
+        _currentLocatorKey = key;
+        _locPrec = prec;
+        _locDispLen = dispLen;
+        if (locatorLayer) window.map.removeLayer(locatorLayer);
+        if (locatorLabelLayer) window.map.removeLayer(locatorLabelLayer);
+        locatorLayer = _createLocatorGridLayer(_mapDark, prec);
+        locatorLabelLayer = L.layerGroup();
+        window.map.addLayer(locatorLayer);
+        window.map.addLayer(locatorLabelLayer);
+        _updateLocatorLabels();
+      }
+
+      window.setMapLocatorOverlay = function(show, darkMode) {
+        if (darkMode !== undefined) _mapDark = !!darkMode;
+        locatorVisible = !!show;
+        if (show) {
+          _updateLocatorPrecision();
+        } else {
+          if (locatorLayer) { window.map.removeLayer(locatorLayer); locatorLayer = null; }
+          if (locatorLabelLayer) { window.map.removeLayer(locatorLabelLayer); locatorLabelLayer = null; }
+          _currentLocatorKey = '';
+        }
+      };
+
+      window.map.on('zoom', function() {
+        if (!locatorVisible) return;
+        const now = Date.now();
+        if (now - _lastLocatorCheck < 80) return;
+        _lastLocatorCheck = now;
+        _updateLocatorPrecision();
+      });
+      window.map.on('zoomend', function() {
+        if (locatorVisible) _updateLocatorPrecision();
+      });
+      window.map.on('moveend', function() {
+        if (locatorVisible) _updateLocatorLabels();
+      });
+
+      function clearBeamLayers() {
+        beamLayers.forEach(l => window.map.removeLayer(l));
+        beamLayers = [];
+        if (targetLine) { window.map.removeLayer(targetLine); targetLine = null; }
+      }
+
+      function drawBeamLayers(beams) {
+        (beams || []).forEach(b => {
+          const poly = (b.polygon || []).map(p => [p[0], p[1]]);
+          if (poly.length >= 3) {
+            beamLayers.push(L.polygon(poly, {
+              color: b.stroke || '#5BA3D0',
+              fillColor: b.fill || '#87CEEB',
+              weight: 2, fillOpacity: 0.28, interactive: false
+            }).addTo(window.map));
+          }
+          const line = (b.center_line || []).map(p => [p[0], p[1]]);
+          if (line.length >= 2) {
+            beamLayers.push(L.polyline(line, {
+              color: b.stroke || '#5BA3D0',
+              weight: 2, dashArray: '6,6', interactive: false
+            }).addTo(window.map));
+          }
+        });
+      }
+
+      function drawTargetLine(pts, color) {
+        if (targetLine) { window.map.removeLayer(targetLine); targetLine = null; }
+        if (!pts || pts.length < 2) return;
+        targetLine = L.polyline(pts.map(p => [p[0], p[1]]), {
+          color: color || '#ff7043', weight: 2, dashArray: '4,6', interactive: false
+        }).addTo(window.map);
+      }
+
+      window.setClickMarker = function(lat2, lon2) {
+        if (clickMarker) window.map.removeLayer(clickMarker);
+        clickMarker = L.circleMarker([lat2, lon2], {
+          radius: 7, color: '#ff7043', fillColor: '#ffab91', fillOpacity: 0.9, weight: 2
+        }).addTo(window.map);
+      };
+
+      window.clearClickMarker = function() {
+        if (clickMarker) { window.map.removeLayer(clickMarker); clickMarker = null; }
+      };
+
+      window.updateBeam = function(data) {
+        if (!data) return;
+        try { window.map.invalidateSize(true); } catch (e) {}
+        stationLat = data.lat;
+        stationLon = data.lon;
+        const posChanged = !marker
+          || Math.abs(marker.getLatLng().lat - data.lat) > 1e-8
+          || Math.abs(marker.getLatLng().lng - data.lon) > 1e-8;
+        if (posChanged) {
+          if (marker) window.map.removeLayer(marker);
+          marker = L.circleMarker([data.lat, data.lon], {
+            radius: 8, color: '#5AB0FF', fillColor: '#5AB0FF', fillOpacity: 1, weight: 2
+          }).addTo(window.map);
+          if (data.recenter) window.map.setView([data.lat, data.lon], window.map.getZoom());
+        }
+        clearBeamLayers();
+        drawBeamLayers(data.beams || []);
+        drawTargetLine(data.target_bearing_line, data.target_bearing_color);
+        const info = document.getElementById('infoMain');
+        if (info) {
+          info.innerHTML =
+            '<div><strong>Standort:</strong> ' + (data.location_str || '') + '</div>' +
+            '<div><strong>Öffnung:</strong> ' + Number(data.opening || 0).toFixed(1) + '°</div>' +
+            '<div><strong>Reichweite:</strong> ' + Number(data.range_km || 0).toFixed(1) + ' km</div>' +
+            (data.status_line ? ('<div>' + data.status_line + '</div>') : '');
+        }
+      };
+
+      window.map.on('click', function(e) {
+        const lat2 = e.latlng.lat;
+        const lon2 = e.latlng.lng;
+        window.setClickMarker(lat2, lon2);
+        if (window.RotorMap && window.RotorMap.onMapClick) {
+          window.RotorMap.onMapClick(lat2, lon2);
+        }
+      });
+
+      marker = L.circleMarker([stationLat, stationLon], {
+        radius: 8, color: '#5AB0FF', fillColor: '#5AB0FF', fillOpacity: 1, weight: 2
+      }).addTo(window.map);
+
+      document.getElementById('infoMain').textContent = 'Karte bereit';
+
+      // Locator standardmäßig an (wie Bridge-Checkbox, hier default on)
+      setTimeout(function() {
+        window.setMapLocatorOverlay(true, MAP_DARK);
+      }, 100);
+
+      setTimeout(function() { try { window.map.invalidateSize(true); } catch(e) {} }, 50);
+      setTimeout(function() { try { window.map.invalidateSize(true); } catch(e) {} }, 250);
+      setTimeout(function() { try { window.map.invalidateSize(true); } catch(e) {} }, 800);
+    })();
+  </script>
+</body>
+</html>

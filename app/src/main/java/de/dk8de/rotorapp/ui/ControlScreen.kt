@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -98,8 +99,9 @@ fun ControlScreen(
     onRefreshTemps: () -> Unit,
     onSelectAntenna: (Int) -> Unit,
     onResetDwell: () -> Unit,
-    onResetAccBins: () -> Unit,
+    onParkAzimuth: () -> Unit,
     onOpenProfiles: () -> Unit,
+    onOpenMap: () -> Unit,
 ) {
     val connected = state.rotor.connected
     val canMoveAz = connected && state.rotor.azOnline && state.rotor.azReferenced && !state.rotor.azHoming
@@ -153,6 +155,17 @@ fun ControlScreen(
                             .border(1.dp, BridgeButtonBorder, CircleShape),
                     )
                     Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = onOpenMap,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Map,
+                            contentDescription = "Karte",
+                            tint = BridgeText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                     IconButton(
                         onClick = onOpenProfiles,
                         modifier = Modifier.size(32.dp),
@@ -216,7 +229,7 @@ fun ControlScreen(
                             onRefreshTemps = onRefreshTemps,
                             onSelectAntenna = onSelectAntenna,
                             onResetDwell = onResetDwell,
-                            onResetAccBins = onResetAccBins,
+                            onParkAzimuth = onParkAzimuth,
                             onHomeAz = { onHomeAxis(RotorAxis.AZ) },
                             onHomeEl = { onHomeAxis(RotorAxis.EL) },
                         )
@@ -256,23 +269,37 @@ fun ControlScreen(
                 )
             }
 
-            // Querformat: nur kleines Zahnrad oben rechts (keine Titelleiste)
+            // Querformat: Karte + Zahnrad oben rechts
             if (landscape) {
-                IconButton(
-                    onClick = onOpenProfiles,
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .zIndex(2f)
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(top = 2.dp, end = 4.dp)
-                        .size(32.dp),
+                        .padding(top = 2.dp, end = 4.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "Einstellungen",
-                        tint = BridgeText,
-                        modifier = Modifier.size(18.dp),
-                    )
+                    IconButton(
+                        onClick = onOpenMap,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Map,
+                            contentDescription = "Karte",
+                            tint = BridgeText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onOpenProfiles,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Einstellungen",
+                            tint = BridgeText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }
@@ -321,7 +348,7 @@ private fun QuickSettingsPage(
     onRefreshTemps: () -> Unit,
     onSelectAntenna: (Int) -> Unit,
     onResetDwell: () -> Unit,
-    onResetAccBins: () -> Unit,
+    onParkAzimuth: () -> Unit,
     onHomeAz: () -> Unit,
     onHomeEl: () -> Unit,
 ) {
@@ -407,33 +434,27 @@ private fun QuickSettingsPage(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("Statistik zurücksetzen", color = BridgeText, fontWeight = FontWeight.SemiBold)
-                Row(
+                BridgeButton(
+                    text = "STANDZEIT",
+                    onClick = onResetDwell,
+                    enabled = connected,
+                    compact = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    BridgeButton(
-                        text = "STANDZEIT",
-                        onClick = onResetDwell,
-                        enabled = connected,
-                        compact = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                    )
-                    BridgeButton(
-                        text = "STROM-BINS",
-                        onClick = onResetAccBins,
-                        enabled = connected,
-                        compact = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                    )
-                }
+                )
             }
         }
+
+        BridgeButton(
+            text = "PARKEN",
+            onClick = onParkAzimuth,
+            enabled = connected && state.rotor.azReferenced && !state.rotor.azHoming,
+            compact = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp),
+        )
 
         Row(
             modifier = Modifier

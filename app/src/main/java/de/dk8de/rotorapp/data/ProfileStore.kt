@@ -2,11 +2,13 @@ package de.dk8de.rotorapp.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import de.dk8de.rotorapp.geo.GeoUtils
 import de.dk8de.rotorapp.ui.theme.HeatmapScale
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -30,6 +32,10 @@ data class UiDisplayPrefs(
     val heatmapNormMin: Int = 0,
     val heatmapNormMax: Int = 0,
     val heatmapThrRed: Int = 0,
+    /** Stationsstandort für die Karte (wie Bridge location_*). */
+    val locationLat: Double = GeoUtils.DEFAULT_LAT,
+    val locationLon: Double = GeoUtils.DEFAULT_LON,
+    val locationLocator: String = "",
 ) {
     /** Gültige Custom-Skala oder null (= Auto). */
     fun stromHeatmapScale(): HeatmapScale? {
@@ -37,6 +43,9 @@ data class UiDisplayPrefs(
         val s = HeatmapScale(heatmapThrBlue, heatmapNormMin, heatmapNormMax, heatmapThrRed)
         return if (s.isValid()) s else null
     }
+
+    fun effectiveLatLon(): Pair<Double, Double> =
+        GeoUtils.effectiveStationLatLon(locationLat, locationLon, locationLocator)
 }
 
 class ProfileStore(private val context: Context) {
@@ -52,6 +61,9 @@ class ProfileStore(private val context: Context) {
     private val keyHeatmapNormMin = intPreferencesKey("heatmap_norm_min_az")
     private val keyHeatmapNormMax = intPreferencesKey("heatmap_norm_max_az")
     private val keyHeatmapThrRed = intPreferencesKey("heatmap_thr_red_az")
+    private val keyLocationLat = doublePreferencesKey("location_lat")
+    private val keyLocationLon = doublePreferencesKey("location_lon")
+    private val keyLocationLocator = stringPreferencesKey("location_locator")
 
     val profiles: Flow<List<RotorProfile>> = context.profileDataStore.data.map { prefs ->
         decodeProfiles(prefs[keyProfiles])
@@ -71,6 +83,9 @@ class ProfileStore(private val context: Context) {
             heatmapNormMin = (prefs[keyHeatmapNormMin] ?: 0).coerceIn(0, 65535),
             heatmapNormMax = (prefs[keyHeatmapNormMax] ?: 0).coerceIn(0, 65535),
             heatmapThrRed = (prefs[keyHeatmapThrRed] ?: 0).coerceIn(0, 65535),
+            locationLat = prefs[keyLocationLat] ?: GeoUtils.DEFAULT_LAT,
+            locationLon = prefs[keyLocationLon] ?: GeoUtils.DEFAULT_LON,
+            locationLocator = prefs[keyLocationLocator] ?: "",
         )
     }
 
@@ -126,6 +141,14 @@ class ProfileStore(private val context: Context) {
             prefs[keyHeatmapNormMin] = normMin.coerceIn(0, 65535)
             prefs[keyHeatmapNormMax] = normMax.coerceIn(0, 65535)
             prefs[keyHeatmapThrRed] = thrRed.coerceIn(0, 65535)
+        }
+    }
+
+    suspend fun setLocation(lat: Double, lon: Double, locator: String = "") {
+        context.profileDataStore.edit { prefs ->
+            prefs[keyLocationLat] = lat.coerceIn(-90.0, 90.0)
+            prefs[keyLocationLon] = lon.coerceIn(-180.0, 180.0)
+            prefs[keyLocationLocator] = locator.trim()
         }
     }
 

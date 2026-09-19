@@ -52,8 +52,8 @@ data class RotorLiveState(
     val azOnline: Boolean = false,
     val elOnline: Boolean = false,
     /**
-     * Anderer Master steuert/pollt: App sendet kein GETPOS/GETREF,
-     * nur Mitschnitt (SETPOSDG/ACK_GETPOSDG/SETPOSCC).
+     * Früher: anderer Master pollt → App nur mitsniffen.
+     * Fernbedienung (SETPOSCC/SETPOSDG) lässt die App aktiv pollen; Flag bleibt für Kompatibilität.
      */
     val busPassive: Boolean = false,
     val moving: Boolean = false,
@@ -847,11 +847,61 @@ class RotorRepository {
             cmd == "SETPOSDG" -> applySetPosDgFromBus(tel)
             cmd.startsWith("ACK_SETPOSDG") -> applyAckSetPosDgFromBus(tel)
             cmd == "SETASELECT" || cmd.startsWith("ACK_GETASELECT") -> applyAntennaSelectFromBus(tel)
+            cmd == "SETPWM" || cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM") ->
+                applyPwmFromBus(tel)
             cmd == "STOP" -> applyStopFromBus(tel)
             cmd == "ERR" || cmd.startsWith("ACK_GETERR") || cmd.startsWith("ACK_ERR") ->
                 applyErrFromBus(tel)
             cmd == "WARN" || cmd.startsWith("ACK_GETWARN") -> applyWarnFromBus(tel)
             cmd.startsWith("ACK_GETPOSDG") || cmd.startsWith("ACK_POSDG") -> applyPosAckFromBus(tel)
+        }
+    }
+
+    /**
+     * Fremdes SETPWM / ACK_SETPWM / ACK_GETPWM → Slider anhand Slave-ID (Profil AZ/EL).
+     * Eigenes Echo (src==master bzw. ACK an uns) ignorieren — State schon gesetzt.
+     */
+    private fun applyPwmFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+        val cmd = tel.cmd.trim().uppercase()
+        val saz = profile.slaveAz
+        val sel = profile.slaveEl
+        val isSet = cmd == "SETPWM"
+        val isAck = cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM")
+        if (!isSet && !isAck) return
+
+        val axis = when {
+            isSet && tel.dst == saz -> RotorAxis.AZ
+            isSet && profile.enableEl && tel.dst == sel -> RotorAxis.EL
+            isAck && tel.src == saz -> RotorAxis.AZ
+            isAck && profile.enableEl && tel.src == sel -> RotorAxis.EL
+            else -> return
+        }
+
+        // Eigenes SETPWM-Echo / eigenes ACK — UI schon aktualisiert
+        if (isSet && tel.src == profile.masterId) return
+        if (isAck && tel.dst == profile.masterId) return
+
+        val pct = de.dk8de.rotorapp.protocol.Rs485Protocol.parseDegree(tel.params)
+            ?.toInt()
+            ?.coerceIn(0, 100)
+            ?: return
+
+        val prev = _state.value
+        val cur = when (axis) {
+            RotorAxis.AZ -> prev.pwmAz
+            RotorAxis.EL -> prev.pwmEl
+        }
+        if (cur == pct) return
+
+        _state.value = when (axis) {
+            RotorAxis.AZ -> prev.copy(
+                pwmAz = pct,
+                lastLog = "Bus SETPWM AZ $pct%",
+            )
+            RotorAxis.EL -> prev.copy(
+                pwmEl = pct,
+                lastLog = "Bus SETPWM EL $pct%",
+            )
         }
     }
 
@@ -875,6 +925,10 @@ class RotorRepository {
         )
     }
 
+    /**
+     * SETPOSCC = Fernbedienung-Vorschau: nur Sollzeiger, kein SETPOSDG, nicht passiv.
+     * Die Fernbedienung sendet SETPOSDG selbst; die App pollt weiter aktiv.
+     */
     private fun applySetPosCc(tel: de.dk8de.rotorapp.protocol.Telegram) {
         val (angle, rid) = de.dk8de.rotorapp.protocol.Rs485Protocol.parseSetPosCc(tel.params)
         if (angle == null) return
@@ -895,7 +949,7 @@ class RotorRepository {
         when (axis) {
             RotorAxis.AZ -> {
                 if (!_state.value.moving && now < azIgnoreCcUntilMs) return
-                _state.value = _state.value.copy(
+                _state.value = takeBusControl(_state.value).copy(
                     azCompassTarget = deg,
                     azDipoleDisplayBearing = null,
                     lastLog = "SETPOSCC AZ ${"%.1f".format(deg)}°",
@@ -904,7 +958,7 @@ class RotorRepository {
             RotorAxis.EL -> {
                 if (!profile.enableEl) return
                 if (!_state.value.moving && now < elIgnoreCcUntilMs) return
-                _state.value = _state.value.copy(
+                _state.value = takeBusControl(_state.value).copy(
                     elCompassTarget = deg,
                     lastLog = "SETPOSCC EL ${"%.1f".format(deg)}°",
                 )
@@ -940,38 +994,40 @@ class RotorRepository {
         applyForeignSetPosDg(axis, degRaw, source = "ACK_SETPOSDG")
     }
 
-    /** Anderer Master fährt unseren Rotor → Soll setzen, Polling pausieren. */
+    /**
+     * Fernbedienung / anderer Master: SETPOSDG → Soll übernehmen und aktiv weiter pollen
+     * (kein busPassive — App bleibt Master für GETPOS).
+     */
     private fun applyForeignSetPosDg(axis: RotorAxis, degRaw: Double, source: String) {
         val deg = if (axis == RotorAxis.AZ) wrapAz(degRaw) else clampEl(degRaw)
         val now = SystemClock.elapsedRealtime()
+        armSetPosPollGrace()
         when (axis) {
             RotorAxis.AZ -> {
                 azIgnoreCcUntilMs = now + SETPOSCC_SUPPRESS_MS
                 azDipoleLastRotorAz = null
-                val prev = _state.value
+                val prev = takeBusControl(_state.value)
                 val atTarget = prev.azDeg != null && abs(prev.azDeg - deg) <= 0.8
-        _state.value = prev.copy(
-                    busPassive = true,
+                _state.value = prev.copy(
                     azOnline = true,
                     azTarget = deg,
                     azCompassTarget = null,
                     azDipoleDisplayBearing = null,
                     moving = !atTarget,
-                    lastLog = "Bus $source AZ ${"%.1f".format(deg)}° (passiv)",
+                    lastLog = "Bus $source AZ ${"%.1f".format(deg)}°",
                 )
             }
             RotorAxis.EL -> {
                 if (!profile.enableEl) return
                 elIgnoreCcUntilMs = now + SETPOSCC_SUPPRESS_MS
-                val prev = _state.value
+                val prev = takeBusControl(_state.value)
                 val atTarget = prev.elDeg != null && abs(prev.elDeg - deg) <= 0.8
                 _state.value = prev.copy(
-                    busPassive = true,
                     elOnline = true,
                     elTarget = deg,
                     elCompassTarget = null,
                     moving = !atTarget,
-                    lastLog = "Bus $source EL ${"%.1f".format(deg)}° (passiv)",
+                    lastLog = "Bus $source EL ${"%.1f".format(deg)}°",
                 )
             }
         }
@@ -1615,6 +1671,69 @@ class RotorRepository {
             _state.value = _state.value.copy(
                 lastLog = "SETPOSDG AZ fehlgeschlagen",
                 statusText = "SETPOSDG AZ fehlgeschlagen",
+            )
+        }
+        ok
+    }
+
+    /**
+     * Parken AZ: GETHOMEPOS lesen und per SETPOSDG anfahren (Rotorwinkel, kein Dipol-Offset).
+     */
+    suspend fun parkAzimuth(): Boolean = ioMutex.withLock {
+        client.clearAbortAwait()
+        ensureConnected()
+        val s = takeBusControl(_state.value)
+        if (!s.azReferenced || s.azHoming) {
+            _state.value = s.copy(
+                lastLog = "AZ nicht referenziert – HOME nötig",
+                statusText = "AZ nicht referenziert – HOME nötig",
+            )
+            return@withLock false
+        }
+        val home = runCatching {
+            client.getHomePos(profile.slaveAz, timeoutMs = 800)
+        }.getOrNull()
+        if (home == null) {
+            _state.value = s.copy(
+                lastLog = "GETHOMEPOS fehlgeschlagen",
+                statusText = "GETHOMEPOS fehlgeschlagen",
+            )
+            return@withLock false
+        }
+        val target = AntennaMath.wrap360(home)
+        azDipoleLastRotorAz = null
+        _state.value = s.copy(
+            azTarget = target,
+            azCompassTarget = null,
+            azDipoleDisplayBearing = null,
+            moving = true,
+            lastLog = "Parken AZ SETPOSDG ${"%.1f".format(target)}° (GETHOMEPOS)",
+            statusText = faultStatusText(s),
+        )
+        val ok = client.setPosDg(profile.slaveAz, target)
+        if (ok) {
+            azIgnoreCcUntilMs = SystemClock.elapsedRealtime() + SETPOSCC_SUPPRESS_MS
+            armSetPosPollGrace()
+            val az = runCatching {
+                client.getPosDg(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+            }.getOrNull()
+            if (az != null) {
+                azFailStreak = 0
+                lastOkPollMs = System.currentTimeMillis()
+                val nowMs = SystemClock.elapsedRealtime()
+                azSmoother.setDynamic(true)
+                azSmoother.updateSample(az.toFloat(), nowMs = nowMs, expectedPeriodS = 0.25f)
+                _state.value = _state.value.copy(
+                    azOnline = true,
+                    azDeg = az,
+                    azSmoothDeg = azSmoother.current()?.toDouble(),
+                    moving = true,
+                )
+            }
+        } else if (!client.isAwaitAborted) {
+            _state.value = _state.value.copy(
+                lastLog = "Parken AZ fehlgeschlagen",
+                statusText = "Parken AZ fehlgeschlagen",
             )
         }
         ok

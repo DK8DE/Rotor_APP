@@ -89,6 +89,19 @@ class RotorClient(
         return Rs485Protocol.parseDegree(ack.params)?.toInt()
     }
 
+    /** Hom-/Parkwinkel in Grad (GETHOMEPOS). */
+    suspend fun getHomePos(dst: Int, timeoutMs: Long = 800): Double? {
+        val frame = Rs485Protocol.build(masterId, dst, "GETHOMEPOS", "0")
+        val ack = sendAndAwait(
+            frame,
+            "ACK_GETHOMEPOS",
+            "NAK_GETHOMEPOS",
+            timeoutMs = timeoutMs,
+        ) ?: return null
+        if (ack.cmd.startsWith("NAK")) return null
+        return Rs485Protocol.parseDegree(ack.params)
+    }
+
     /** SETREF:0 = Fehler quittieren, SETREF:1 = Homing starten. */
     suspend fun setRef(dst: Int, value: Int = 1): Boolean {
         val frame = Rs485Protocol.build(masterId, dst, "SETREF", value.toString())
@@ -428,6 +441,7 @@ class RotorClient(
         return u == "SETPOSCC" ||
             u == "SETPOSDG" ||
             u == "SETASELECT" ||
+            u == "SETPWM" ||
             u == "STOP" ||
             u == "SETREF" ||
             u == "ERR" ||
@@ -435,6 +449,8 @@ class RotorClient(
             u.startsWith("ACK_GETPOSDG") ||
             u.startsWith("ACK_POSDG") ||
             u.startsWith("ACK_SETPOSDG") ||
+            u.startsWith("ACK_SETPWM") ||
+            u.startsWith("ACK_GETPWM") ||
             u.startsWith("ACK_GETWARN") ||
             u.startsWith("ACK_GETERR") ||
             u.startsWith("ACK_ERR") ||
