@@ -77,7 +77,7 @@ jobs:
           echo "apk=${OUT}" >> "$GITHUB_OUTPUT"
 
       - name: Build-Artefakt hochladen
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: RotorApp-${{ steps.ver.outputs.tag }}
           path: RotorApp-${{ steps.ver.outputs.tag }}.apk
@@ -85,7 +85,7 @@ jobs:
 
       - name: GitHub Release erstellen
         if: steps.tagcheck.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Rotor App ${{ steps.ver.outputs.version }}
