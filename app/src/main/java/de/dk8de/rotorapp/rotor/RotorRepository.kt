@@ -531,14 +531,20 @@ class RotorRepository {
                 azWarnIds = emptyList(),
                 elWarnIds = emptyList(),
             )
-            // Doppel-Connect (Collect + Lifecycle) → Bootstrap nur einmal
+            // Doppel-Connect (Collect + Lifecycle) → schweres Bootstrap nur einmal,
+            // Ref+Position aber IMMER (sonst Nadel erst nach Idle-Probe, Temps bleiben aus Cache)
             val nowBoot = SystemClock.elapsedRealtime()
-            val skipBootstrap = nowBoot - lastBootstrapMs < 2_500L
-            if (!skipBootstrap) {
-                lastBootstrapMs = nowBoot
-                // Winkel früh: Ref → Position, dann Typ/PWM/Temp
-                runCatching { refreshReferenceLocked() }
+            val skipHeavyBootstrap = nowBoot - lastBootstrapMs < 2_500L
+            runCatching { refreshReferenceLocked() }
+            runCatching { fetchStartupPositionsLocked() }
+            // GETPOS-Retry falls erster Versuch leer blieb (Bus noch warm)
+            if (_state.value.azOnline && _state.value.azDeg == null ||
+                (profile.enableEl && _state.value.elOnline && _state.value.elDeg == null)
+            ) {
                 runCatching { fetchStartupPositionsLocked() }
+            }
+            if (!skipHeavyBootstrap) {
+                lastBootstrapMs = nowBoot
                 runCatching { queryRotorTypesLocked() }
                 runCatching { refreshPwmLocked() }
                 runCatching { refreshWarningsLocked() }
@@ -696,7 +702,7 @@ class RotorRepository {
             val now = System.currentTimeMillis()
             val haveAz = !azOk || _state.value.stromBins36 != null
             val haveEl = !elOk || _state.value.stromBinsEl36 != null
-            if (!force && now - lastAccFetchMs < 2_500L && haveAz && haveEl) {
+            if (!force && now - lastAccFetchMs < 4_000L && haveAz && haveEl) {
                 return
             }
             lastAccFetchMs = now
@@ -764,18 +770,18 @@ class RotorRepository {
         }
     }
 
-    suspend fun refreshWind(force: Boolean = false) {
-        if (!client.isConnected || !wantWindPoll) return
-        if (!force && (userCmdPending || idleExtrasDeferred())) return
+    suspend fun refreshWind(force: Boolean = false): Boolean {
+        if (!client.isConnected || !wantWindPoll) return false
+        if (!force && (userCmdPending || idleExtrasDeferred())) return false
         // Wind hängt am AZ — offline nicht anfragen
-        if (!_state.value.azOnline) return
-        if (!_forceIdleOk(force)) return
-        if (!ioMutex.tryLock()) return
-        try {
-            if (!force && (userCmdPending || !_state.value.azOnline)) return
+        if (!_state.value.azOnline) return false
+        if (!_forceIdleOk(force)) return false
+        // Warten statt tryLock: sonst fallen Idle-Abfragen gegen GETPOS oft aus (5–6 s Lücken)
+        return ioMutex.withLock {
+            if (!force && (userCmdPending || !_state.value.azOnline)) return@withLock false
+            if (!_forceIdleOk(force)) return@withLock false
             refreshWindLocked(force = force)
-        } finally {
-            ioMutex.unlock()
+            true
         }
     }
 
@@ -1152,21 +1158,12 @@ class RotorRepository {
         if (!client.isConnected) return
         if (_state.value.busPassive) return
         if (userCmdPending) return
-        // Fast-Poll: Mutex nehmen (warten) — tryLock würde gegen Sniff oft ausfallen → gemächlicher Bus
-        val fast = needsFastPoll()
-        if (fast) {
-            ioMutex.withLock {
-                if (userCmdPending) return@withLock
-                pollPositionsLocked(expectedPeriodS)
-            }
-        } else {
-            if (!ioMutex.tryLock()) return
-            try {
-                if (userCmdPending) return
-                pollPositionsLocked(expectedPeriodS)
-            } finally {
-                ioMutex.unlock()
-            }
+        // Immer warten: Idle-GETPOS 1×/s darf nicht an Temp/Wind/ACC/Sniff scheitern
+        // (zweiter Master braucht zuverlässigen Takt).
+        ioMutex.withLock {
+            if (userCmdPending) return@withLock
+            if (_state.value.busPassive) return@withLock
+            pollPositionsLocked(expectedPeriodS)
         }
     }
 
@@ -1721,15 +1718,14 @@ class RotorRepository {
         refreshPwmLocked()
     }
 
-    suspend fun refreshTemps() {
-        if (!client.isConnected) return
-        if (userCmdPending || idleExtrasDeferred()) return
-        if (!ioMutex.tryLock()) return
-        try {
-            if (userCmdPending) return
+    suspend fun refreshTemps(): Boolean {
+        if (!client.isConnected) return false
+        if (userCmdPending || idleExtrasDeferred()) return false
+        // Warten statt tryLock: Idle-Takt 2 s darf nicht an GETPOS scheitern
+        return ioMutex.withLock {
+            if (userCmdPending) return@withLock false
             refreshTempsLocked()
-        } finally {
-            ioMutex.unlock()
+            true
         }
     }
 
@@ -1932,7 +1928,7 @@ class RotorRepository {
         val cur = _state.value
         if (cur.azOnline) {
             val az = runCatching {
-                client.getPosDg(profile.slaveAz, timeoutMs = POS_TIMEOUT_FAST_MS)
+                client.getPosDg(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
             if (az != null) {
                 azFailStreak = 0
@@ -1942,13 +1938,13 @@ class RotorRepository {
                 azSmoother.updateSample(az.toFloat(), nowMs = nowMs, expectedPeriodS = 0.5f)
                 _state.value = _state.value.copy(
                     azDeg = az,
-                    azSmoothDeg = azSmoother.current()?.toDouble(),
+                    azSmoothDeg = azSmoother.current()?.toDouble() ?: az,
                 )
             }
         }
         if (profile.enableEl && _state.value.elOnline) {
             val el = runCatching {
-                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_FAST_MS)
+                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
             if (el != null) {
                 elFailStreak = 0
@@ -1958,7 +1954,7 @@ class RotorRepository {
                 elSmoother.updateSample(el.toFloat(), nowMs = nowMs, expectedPeriodS = 0.5f)
                 _state.value = _state.value.copy(
                     elDeg = el,
-                    elSmoothDeg = elSmoother.current()?.toDouble(),
+                    elSmoothDeg = elSmoother.current()?.toDouble() ?: el,
                 )
             }
         }

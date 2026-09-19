@@ -18,8 +18,8 @@ private val Context.profileDataStore by preferencesDataStore(name = "rotor_profi
 /** App-weite Anzeige-Einstellungen (nicht pro Rotor). */
 data class UiDisplayPrefs(
     val showBeamOverlay: Boolean = true,
-    val showStromRing: Boolean = true,
-    val showDwellRing: Boolean = true,
+    val showStromRing: Boolean = false,
+    val showDwellRing: Boolean = false,
     /** Standzeit bis Rot (Minuten). */
     val dwellFullMinutes: Float = 5f,
     /** Richtungs-Einteilung Standzeit-Ring (wie Bridge compass_dwell_sectors). */
@@ -62,8 +62,8 @@ class ProfileStore(private val context: Context) {
     val uiDisplayPrefs: Flow<UiDisplayPrefs> = context.profileDataStore.data.map { prefs ->
         UiDisplayPrefs(
             showBeamOverlay = prefs[keyShowBeamOverlay] ?: true,
-            showStromRing = prefs[keyShowStromRing] ?: true,
-            showDwellRing = prefs[keyShowDwellRing] ?: true,
+            showStromRing = prefs[keyShowStromRing] ?: false,
+            showDwellRing = prefs[keyShowDwellRing] ?: false,
             dwellFullMinutes = (prefs[keyDwellFullMinutes] ?: 5f).coerceIn(0.5f, 120f),
             dwellSectors = (prefs[keyDwellSectors] ?: 20).coerceIn(10, 100),
             heatmapCustom = prefs[keyHeatmapCustom] ?: false,

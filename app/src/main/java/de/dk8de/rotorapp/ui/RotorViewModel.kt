@@ -417,7 +417,6 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         if (pollJob?.isActive != true) {
             pollJob = viewModelScope.launch {
                 var lastPosPollMs = 0L
-                var lastTempWindMs = 0L
                 while (isActive) {
                     val s = repo.state.value
                     when {
@@ -439,43 +438,82 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         else -> {
                             val now = System.currentTimeMillis()
-                            // Idle GETPOS / Ref alle 5 s
-                            if (now - lastPosPollMs >= 5_000L) {
-                                runCatching { repo.pollPositions(expectedPeriodS = 5f) }
-                                if (!repo.needsFastPoll()) {
+                            val needPos = !s.azOnline || s.azDeg == null ||
+                                (repo.activeProfile().enableEl &&
+                                    (!s.elOnline || s.elDeg == null))
+                            // GETPOSDG fest 1×/s — sonst nichts in diesem Job
+                            val posInterval = if (needPos) 300L else 1_000L
+                            if (now - lastPosPollMs >= posInterval) {
+                                lastPosPollMs = System.currentTimeMillis()
+                                if (needPos &&
+                                    (!s.azOnline ||
+                                        (repo.activeProfile().enableEl && !s.elOnline))
+                                ) {
                                     runCatching { repo.probeOfflineAxes() }
-                                    runCatching { repo.pollReference() }
                                 }
-                                lastPosPollMs = now
+                                runCatching {
+                                    repo.pollPositions(
+                                        expectedPeriodS = if (needPos) 0.5f else 1f,
+                                    )
+                                }
                             }
-                            // Temp + Wind idle alle 3 s
-                            if (now - lastTempWindMs >= 3_000L && !repo.needsFastPoll()) {
-                                runCatching { repo.refreshTemps() }
-                                runCatching { repo.refreshWind() }
-                                lastTempWindMs = now
-                            }
-                            interruptiblePollDelay(250L)
+                            interruptiblePollDelay(100L)
                         }
                     }
                 }
             }
         }
+        // Temp/Wind alle 2 s, Stromring alle 4 s — eigener Job, blockiert GETPOS-Takt nicht
         if (statsJob?.isActive != true) {
             statsJob = viewModelScope.launch {
+                var lastTempWindMs = 0L
+                var lastAccMs = 0L
+                var lastRefMs = 0L
                 var wasMoving = false
                 while (isActive) {
                     val s = repo.state.value
-                    if (s.connected && !s.busPassive && !s.homing) {
-                        val busy = s.moving || repo.isMotionHoldActive()
-                        val forceAcc = wasMoving && !busy
-                        wasMoving = busy
-                        if (!busy) {
-                            runCatching { repo.refreshAccBins(force = forceAcc) }
+                    val busy = s.moving || s.homing || repo.isMotionHoldActive() ||
+                        repo.needsFastPoll()
+                    val now = System.currentTimeMillis()
+                    if (s.connected && !s.busPassive) {
+                        if (busy) {
+                            wasMoving = true
+                        } else {
+                            if (wasMoving) {
+                                wasMoving = false
+                                runCatching { repo.refreshAccBins(force = true) }
+                                lastAccMs = now
+                            }
+                            if (now - lastTempWindMs >= 2_000L) {
+                                val tempOk = runCatching { repo.refreshTemps() }.getOrDefault(false)
+                                val windOn = repo.activeProfile().enableWind ||
+                                    repo.state.value.windHwEnabled
+                                val windOk = if (windOn) {
+                                    runCatching { repo.refreshWind() }.getOrDefault(false)
+                                } else {
+                                    true
+                                }
+                                // Nur bei echtem Bus-Zugriff weiterschalten (sonst sofort erneut)
+                                if (tempOk || (windOn && windOk)) {
+                                    lastTempWindMs = System.currentTimeMillis()
+                                }
+                            }
+                            if (uiState.value.showStromRing &&
+                                now - lastAccMs >= 4_000L
+                            ) {
+                                runCatching { repo.refreshAccBins() }
+                                lastAccMs = System.currentTimeMillis()
+                            }
+                            if (now - lastRefMs >= 8_000L) {
+                                runCatching { repo.probeOfflineAxes() }
+                                runCatching { repo.pollReference() }
+                                lastRefMs = System.currentTimeMillis()
+                            }
                         }
                     } else {
                         wasMoving = false
                     }
-                    delay(5_000L)
+                    delay(200L)
                 }
             }
         }
