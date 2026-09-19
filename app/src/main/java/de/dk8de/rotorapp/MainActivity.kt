@@ -18,7 +18,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import de.dk8de.rotorapp.ui.ControlScreen
-import de.dk8de.rotorapp.ui.MapScreen
 import de.dk8de.rotorapp.ui.ProfilesScreen
 import de.dk8de.rotorapp.ui.RotorViewModel
 import de.dk8de.rotorapp.ui.theme.RotorAppTheme
@@ -80,15 +79,10 @@ class MainActivity : ComponentActivity() {
                             onSelectAntenna = vm::selectAntenna,
                             onResetDwell = vm::resetDwellTimes,
                             onParkAzimuth = vm::parkAzimuth,
+                            onSaveFavorite = vm::saveFavorite,
+                            onDeleteFavorite = vm::deleteFavorite,
+                            onGoFavorite = vm::goFavorite,
                             onOpenProfiles = { nav.navigate("profiles") },
-                            onOpenMap = { nav.navigate("map") },
-                        )
-                    }
-                    composable("map") {
-                        MapScreen(
-                            state = state,
-                            onBack = { nav.popBackStack() },
-                            onMapClickBearing = vm::setAzimuth,
                         )
                     }
                     composable("profiles") {

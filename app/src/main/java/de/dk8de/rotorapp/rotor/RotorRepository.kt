@@ -255,8 +255,8 @@ object AntennaMath {
     }
 }
 
-class RotorRepository {
-    private val link = TcpLink()
+class RotorRepository(context: android.content.Context) {
+    private val link = TcpLink(context.applicationContext)
     private val client = RotorClient(link).also { c ->
         c.onBusTelegram = { tel -> onBusTelegram(tel) }
     }

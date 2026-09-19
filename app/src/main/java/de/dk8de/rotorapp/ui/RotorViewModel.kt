@@ -3,6 +3,7 @@ package de.dk8de.rotorapp.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import de.dk8de.rotorapp.data.PositionFavorite
 import de.dk8de.rotorapp.data.ProfileStore
 import de.dk8de.rotorapp.data.RotorProfile
 import de.dk8de.rotorapp.data.UiDisplayPrefs
@@ -28,6 +29,7 @@ data class AppUiState(
     val hostDraft: String = "192.168.0.246",
     val portDraft: String = "8886",
     val displayPrefs: UiDisplayPrefs = UiDisplayPrefs(),
+    val favorites: List<PositionFavorite> = emptyList(),
 ) {
     val showBeamOverlay: Boolean get() = displayPrefs.showBeamOverlay
     val showStromRing: Boolean get() = displayPrefs.showStromRing
@@ -45,7 +47,7 @@ data class AppUiState(
 
 class RotorViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ProfileStore(app)
-    private val repo = RotorRepository()
+    private val repo = RotorRepository(app)
 
     private val _hostDraft = MutableStateFlow("192.168.0.246")
     private val _portDraft = MutableStateFlow("8886")
@@ -54,18 +56,20 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         store.profiles,
         store.activeProfileId,
         repo.state,
-        combine(_hostDraft, _portDraft, store.uiDisplayPrefs) { host, port, prefs ->
-            Triple(host, port, prefs)
+        combine(_hostDraft, _portDraft, store.uiDisplayPrefs, store.positionFavorites) { host, port, prefs, favs ->
+            arrayOf(host, port, prefs, favs)
         },
     ) { profiles, activeId, rotor, drafts ->
         val active = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+        @Suppress("UNCHECKED_CAST")
         AppUiState(
             profiles = profiles,
             activeProfile = active,
             rotor = rotor,
-            hostDraft = drafts.first,
-            portDraft = drafts.second,
-            displayPrefs = drafts.third,
+            hostDraft = drafts[0] as String,
+            portDraft = drafts[1] as String,
+            displayPrefs = drafts[2] as UiDisplayPrefs,
+            favorites = drafts[3] as List<PositionFavorite>,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AppUiState())
 
@@ -335,6 +339,34 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     fun setLocation(lat: Double, lon: Double, locator: String = "") {
         viewModelScope.launch {
             store.setLocation(lat, lon, locator)
+        }
+    }
+
+    /** Aktuelle Ist-Position als Favorit (fehlendes AZ → 0). */
+    fun saveFavorite(name: String) {
+        val s = uiState.value
+        val az = s.rotor.displayAz(s.rotor.azSmoothDeg ?: s.rotor.azDeg) ?: 0.0
+        val el = if (s.activeProfile?.enableEl == true) {
+            (s.rotor.elSmoothDeg ?: s.rotor.elDeg) ?: 0.0
+        } else {
+            0.0
+        }
+        viewModelScope.launch {
+            store.addPositionFavorite(name, az, el)
+        }
+    }
+
+    fun deleteFavorite(id: String) {
+        viewModelScope.launch {
+            store.deletePositionFavorite(id)
+        }
+    }
+
+    fun goFavorite(id: String) {
+        val fav = uiState.value.favorites.find { it.id == id } ?: return
+        setAzimuth(fav.azDeg)
+        if (uiState.value.activeProfile?.enableEl == true) {
+            setElevation(fav.elDeg)
         }
     }
 

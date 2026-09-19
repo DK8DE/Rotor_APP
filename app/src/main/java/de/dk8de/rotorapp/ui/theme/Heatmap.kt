@@ -86,6 +86,9 @@ fun heatmapColor(t: Float): Color {
     )
 }
 
+/** Farbe für fehlende ACC-Bins (keine Messwerte) — wie Bridge-Normgrün. */
+val StromBinNoDataColor = Color(0f, 180f / 255f, 120f / 255f, 0.85f)
+
 /** Farbe für ACC-Bin: eigene Skala oder Auto mit Mindestspanne. */
 fun stromBinHeatmapColor(
     value: Int,
@@ -93,16 +96,17 @@ fun stromBinHeatmapColor(
     autoVMin: Int,
     autoVMax: Int,
 ): Color {
-    if (value <= 0) return Color.Transparent
+    // Fehlende Segmente (kein Messwert) → grün, damit der Ring geschlossen wirkt
+    if (value <= 0) return StromBinNoDataColor
     if (scale != null && scale.isValid()) {
         return heatmapColor(heatmapTScaled(value, scale))
     }
     if (autoVMax <= autoVMin) {
-        return Color(0f, 180f / 255f, 120f / 255f, 0.85f)
+        return StromBinNoDataColor
     }
     val (lo, hi) = expandedAutoHeatmapRange(autoVMin, autoVMax)
     val span = hi - lo
-    if (span <= 0f) return Color(0f, 180f / 255f, 120f / 255f, 0.85f)
+    if (span <= 0f) return StromBinNoDataColor
     val t = ((value - lo) / span).coerceIn(0f, 1f)
     return heatmapColor(t)
 }

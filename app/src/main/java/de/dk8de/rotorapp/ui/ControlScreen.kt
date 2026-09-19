@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package de.dk8de.rotorapp.ui
 
 import android.content.res.Configuration
@@ -30,27 +32,38 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -65,6 +78,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import de.dk8de.rotorapp.data.PositionFavorite
 import de.dk8de.rotorapp.rotor.RotorAxis
 import de.dk8de.rotorapp.ui.components.AzimuthCompass
 import de.dk8de.rotorapp.ui.components.BridgeButton
@@ -80,6 +94,7 @@ import de.dk8de.rotorapp.ui.theme.BridgePanel
 import de.dk8de.rotorapp.ui.theme.BridgeSoll
 import de.dk8de.rotorapp.ui.theme.BridgeStop
 import de.dk8de.rotorapp.ui.theme.BridgeText
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private const val PAGE_QUICK = 0
@@ -100,8 +115,10 @@ fun ControlScreen(
     onSelectAntenna: (Int) -> Unit,
     onResetDwell: () -> Unit,
     onParkAzimuth: () -> Unit,
+    onSaveFavorite: (String) -> Unit,
+    onDeleteFavorite: (String) -> Unit,
+    onGoFavorite: (String) -> Unit,
     onOpenProfiles: () -> Unit,
-    onOpenMap: () -> Unit,
 ) {
     val connected = state.rotor.connected
     val canMoveAz = connected && state.rotor.azOnline && state.rotor.azReferenced && !state.rotor.azHoming
@@ -109,16 +126,24 @@ fun ControlScreen(
     val profile = state.activeProfile
     val elevationEnabled = profile?.enableEl == true
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    // Querformat + EL: Quick | AZ+EL nebeneinander
+    // Querformat + EL: Quick | AZ+EL nebeneinander | Karte
     val dualAxes = landscape && elevationEnabled
     val pageLabels = when {
-        dualAxes -> listOf("Quick", "AZ/EL")
-        elevationEnabled -> listOf("Quick", "AZ", "EL")
-        else -> listOf("Quick", "AZ")
+        dualAxes -> listOf("Quick", "AZ/EL", "Karte")
+        elevationEnabled -> listOf("Quick", "AZ", "EL", "Karte")
+        else -> listOf("Quick", "AZ", "Karte")
     }
     val pageCount = pageLabels.size
+    val mapPageIndex = pageLabels.lastIndex
     val pagerState = rememberPagerState(initialPage = PAGE_AZ.coerceAtMost(pageCount - 1)) {
         pageCount
+    }
+    val scope = rememberCoroutineScope()
+    val onMapPage = pagerState.currentPage == mapPageIndex
+    // Karte nach erstem Besuch behalten (WebView nicht neu aufbauen)
+    var mapCached by remember { mutableStateOf(false) }
+    LaunchedEffect(onMapPage) {
+        if (onMapPage) mapCached = true
     }
 
     LaunchedEffect(pageCount, dualAxes) {
@@ -154,29 +179,6 @@ fun ControlScreen(
                             .background(if (connected) BridgeIst else BridgeStop)
                             .border(1.dp, BridgeButtonBorder, CircleShape),
                     )
-                    Spacer(Modifier.weight(1f))
-                    IconButton(
-                        onClick = onOpenMap,
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Map,
-                            contentDescription = "Karte",
-                            tint = BridgeText,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = onOpenProfiles,
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Einstellungen",
-                            tint = BridgeText,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
                 }
             }
         },
@@ -190,15 +192,16 @@ fun ControlScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (landscape) {
-                            // Rechts Platz für schwebendes Zahnrad (sonst überdeckt Ist/Soll)
-                            Modifier.padding(start = 10.dp, end = 36.dp, top = 4.dp, bottom = 4.dp)
+                        if (landscape && !onMapPage) {
+                            Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
+                        } else if (onMapPage) {
+                            Modifier.padding(0.dp)
                         } else {
                             Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                         },
                     ),
             ) {
-                if (state.rotor.statusText.isNotBlank()) {
+                if (state.rotor.statusText.isNotBlank() && !onMapPage) {
                     Text(
                         text = state.rotor.statusText,
                         style = MaterialTheme.typography.titleMedium,
@@ -213,91 +216,104 @@ fun ControlScreen(
                     )
                 }
 
-                HorizontalPager(
-                    state = pagerState,
+                Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                ) { page ->
-                    when {
-                        page == PAGE_QUICK -> QuickSettingsPage(
+                ) {
+                    HorizontalPager(
+                        state = pagerState,
+                        // Auf der Karte kein Wischen — sonst kollidiert es mit Pan/Zoom
+                        userScrollEnabled = !onMapPage,
+                        // Nachbarseiten behalten (Kompass nicht neu aufbauen)
+                        beyondViewportPageCount = (pageCount - 1).coerceAtLeast(1),
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        when {
+                            page == mapPageIndex -> Box(Modifier.fillMaxSize())
+                            page == PAGE_QUICK -> QuickSettingsPage(
+                                state = state,
+                                connected = connected,
+                                elevationEnabled = elevationEnabled,
+                                onSetPwm = onSetPwm,
+                                onRefreshPwm = onRefreshPwm,
+                                onRefreshTemps = onRefreshTemps,
+                                onSelectAntenna = onSelectAntenna,
+                                onResetDwell = onResetDwell,
+                                onParkAzimuth = onParkAzimuth,
+                                onHomeAz = { onHomeAxis(RotorAxis.AZ) },
+                                onHomeEl = { onHomeAxis(RotorAxis.EL) },
+                                onGoFavorite = onGoFavorite,
+                                onDeleteFavorite = onDeleteFavorite,
+                            )
+                            dualAxes && page == PAGE_AZ -> DualAxesLandscapePage(
+                                state = state,
+                                canMoveAz = canMoveAz,
+                                canMoveEl = canMoveEl,
+                                connected = connected,
+                                onAzimuth = onAzimuth,
+                                onElevation = onElevation,
+                                onStopAz = { onStopAxis(RotorAxis.AZ) },
+                                onStopEl = { onStopAxis(RotorAxis.EL) },
+                                onSaveFavorite = onSaveFavorite,
+                            )
+                            page == PAGE_AZ -> AzimuthPage(
+                                state = state,
+                                canMove = canMoveAz,
+                                connected = connected,
+                                onAzimuth = onAzimuth,
+                                onStop = { onStopAxis(RotorAxis.AZ) },
+                                onSaveFavorite = onSaveFavorite,
+                            )
+                            page == PAGE_EL && elevationEnabled -> ElevationPage(
+                                state = state,
+                                canMove = canMoveEl,
+                                connected = connected,
+                                onElevation = onElevation,
+                                onStop = { onStopAxis(RotorAxis.EL) },
+                                onSaveFavorite = onSaveFavorite,
+                            )
+                        }
+                    }
+
+                    if (mapCached) {
+                        MapScreen(
                             state = state,
-                            connected = connected,
-                            elevationEnabled = elevationEnabled,
-                            onSetPwm = onSetPwm,
-                            onRefreshPwm = onRefreshPwm,
-                            onRefreshTemps = onRefreshTemps,
-                            onSelectAntenna = onSelectAntenna,
-                            onResetDwell = onResetDwell,
-                            onParkAzimuth = onParkAzimuth,
-                            onHomeAz = { onHomeAxis(RotorAxis.AZ) },
-                            onHomeEl = { onHomeAxis(RotorAxis.EL) },
-                        )
-                        dualAxes && page == PAGE_AZ -> DualAxesLandscapePage(
-                            state = state,
-                            canMoveAz = canMoveAz,
-                            canMoveEl = canMoveEl,
-                            connected = connected,
-                            onAzimuth = onAzimuth,
-                            onElevation = onElevation,
-                            onStopAz = { onStopAxis(RotorAxis.AZ) },
-                            onStopEl = { onStopAxis(RotorAxis.EL) },
-                        )
-                        page == PAGE_AZ -> AzimuthPage(
-                            state = state,
-                            canMove = canMoveAz,
-                            connected = connected,
-                            onAzimuth = onAzimuth,
-                            onStop = { onStopAxis(RotorAxis.AZ) },
-                        )
-                        page == PAGE_EL && elevationEnabled -> ElevationPage(
-                            state = state,
-                            canMove = canMoveEl,
-                            connected = connected,
-                            onElevation = onElevation,
-                            onStop = { onStopAxis(RotorAxis.EL) },
+                            onMapClickBearing = onAzimuth,
+                            active = onMapPage,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(if (onMapPage) 1f else 0f)
+                                .zIndex(if (onMapPage) 1f else -1f),
                         )
                     }
                 }
 
-                PageIndicator(
-                    labels = pageLabels,
-                    currentPage = pagerState.currentPage,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(vertical = 4.dp),
-                )
-            }
-
-            // Querformat: Karte + Zahnrad oben rechts
-            if (landscape) {
+                // Fußzeile: Seitenpunkte mittig, Einstellungen rechts
                 Row(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .zIndex(2f)
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(top = 2.dp, end = 4.dp),
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(
-                        onClick = onOpenMap,
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Map,
-                            contentDescription = "Karte",
-                            tint = BridgeText,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                    Spacer(Modifier.size(40.dp))
+                    PageIndicator(
+                        labels = pageLabels,
+                        currentPage = pagerState.currentPage,
+                        onSelectPage = { index ->
+                            scope.launch { pagerState.animateScrollToPage(index) }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
                     IconButton(
                         onClick = onOpenProfiles,
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(40.dp),
                     ) {
                         Icon(
                             Icons.Default.Settings,
                             contentDescription = "Einstellungen",
                             tint = BridgeText,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
@@ -310,29 +326,48 @@ fun ControlScreen(
 private fun PageIndicator(
     labels: List<String>,
     currentPage: Int,
+    onSelectPage: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = labels.getOrElse(currentPage) { "" },
-            style = MaterialTheme.typography.labelSmall,
-            color = BridgeMuted,
-        )
         Row(
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.clickable(
+                onClick = {
+                    val next = (currentPage + 1) % labels.size
+                    onSelectPage(next)
+                },
+            ),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            repeat(labels.size) { index ->
-                Box(
-                    modifier = Modifier
-                        .size(if (index == currentPage) 7.dp else 5.dp)
-                        .clip(CircleShape)
-                        .background(if (index == currentPage) BridgeAccent else BridgeButtonBorder),
-                )
+            Text(
+                text = labels.getOrElse(currentPage) { "" },
+                style = MaterialTheme.typography.labelMedium,
+                color = BridgeMuted,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(labels.size) { index ->
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clickable { onSelectPage(index) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(if (index == currentPage) 14.dp else 11.dp)
+                                .clip(CircleShape)
+                                .background(if (index == currentPage) BridgeAccent else BridgeButtonBorder),
+                        )
+                    }
+                }
             }
         }
     }
@@ -351,6 +386,8 @@ private fun QuickSettingsPage(
     onParkAzimuth: () -> Unit,
     onHomeAz: () -> Unit,
     onHomeEl: () -> Unit,
+    onGoFavorite: (String) -> Unit,
+    onDeleteFavorite: (String) -> Unit,
 ) {
     LaunchedEffect(connected) {
         if (connected) {
@@ -363,6 +400,17 @@ private fun QuickSettingsPage(
     var elSlider by remember { mutableFloatStateOf((state.rotor.pwmEl ?: 70).coerceIn(30, 100).toFloat()) }
     var lastSentAz by remember { mutableStateOf(-1) }
     var lastSentEl by remember { mutableStateOf(-1) }
+    var favExpanded by remember { mutableStateOf(false) }
+    var selectedFavId by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    val favorites = state.favorites
+    val selectedFav = favorites.find { it.id == selectedFavId }
+    LaunchedEffect(favorites) {
+        if (selectedFavId != null && favorites.none { it.id == selectedFavId }) {
+            selectedFavId = null
+        }
+    }
 
     LaunchedEffect(state.rotor.pwmAz) {
         state.rotor.pwmAz?.let {
@@ -379,6 +427,36 @@ private fun QuickSettingsPage(
         }
     }
 
+    if (confirmDelete && selectedFav != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Favorit löschen?", color = BridgeText) },
+            text = {
+                Text(
+                    "„${selectedFav.name}“ wirklich löschen?",
+                    color = BridgeMuted,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteFavorite(selectedFav.id)
+                        selectedFavId = null
+                        confirmDelete = false
+                    },
+                ) {
+                    Text("Ja", color = BridgeStop)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("Nein", color = BridgeMuted)
+                }
+            },
+            containerColor = BridgePanel,
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -392,6 +470,105 @@ private fun QuickSettingsPage(
             connected = connected,
             onSelect = onSelectAntenna,
         )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = BridgePanel),
+            border = BorderStroke(1.dp, BridgeButtonBorder),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Favoriten", color = BridgeText, fontWeight = FontWeight.SemiBold)
+                ExposedDropdownMenuBox(
+                    expanded = favExpanded,
+                    onExpandedChange = { favExpanded = it && favorites.isNotEmpty() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    TextField(
+                        value = selectedFav?.let { formatFavoriteLabel(it, elevationEnabled) }
+                            ?: if (favorites.isEmpty()) "Keine Favoriten" else "Favorit wählen",
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        enabled = favorites.isNotEmpty(),
+                        textStyle = TextStyle(
+                            color = BridgeText,
+                            fontSize = 14.sp,
+                        ),
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = favExpanded)
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = BridgeText,
+                            unfocusedTextColor = BridgeText,
+                            disabledTextColor = BridgeMuted,
+                            focusedContainerColor = BridgeBg,
+                            unfocusedContainerColor = BridgeBg,
+                            disabledContainerColor = BridgeBg,
+                            focusedIndicatorColor = BridgeButtonBorder,
+                            unfocusedIndicatorColor = BridgeButtonBorder,
+                            disabledIndicatorColor = BridgeButtonBorder,
+                            focusedTrailingIconColor = BridgeMuted,
+                            unfocusedTrailingIconColor = BridgeMuted,
+                        ),
+                        modifier = Modifier
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth()
+                            .height(56.dp),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = favExpanded,
+                        onDismissRequest = { favExpanded = false },
+                        containerColor = BridgePanel,
+                    ) {
+                        favorites.forEach { fav ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        formatFavoriteLabel(fav, elevationEnabled),
+                                        color = BridgeText,
+                                    )
+                                },
+                                onClick = {
+                                    selectedFavId = fav.id
+                                    favExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BridgeButton(
+                        text = "GO",
+                        onClick = { selectedFavId?.let(onGoFavorite) },
+                        enabled = connected && selectedFavId != null &&
+                            state.rotor.azReferenced && !state.rotor.azHoming,
+                        compact = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                    BridgeButton(
+                        text = "DEL",
+                        onClick = { confirmDelete = true },
+                        enabled = selectedFavId != null,
+                        tone = BridgeButtonTone.Stop,
+                        compact = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
+            }
+        }
 
         PwmSliderCard(
             title = "Geschwindigkeit AZ (PWM)",
@@ -640,6 +817,7 @@ private fun DualAxesLandscapePage(
     onElevation: (Double) -> Unit,
     onStopAz: () -> Unit,
     onStopEl: () -> Unit,
+    onSaveFavorite: (String) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -656,6 +834,7 @@ private fun DualAxesLandscapePage(
             onPick = onAzimuth,
             onGo = onAzimuth,
             onStop = onStopAz,
+            onSaveFavorite = onSaveFavorite,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -669,6 +848,7 @@ private fun DualAxesLandscapePage(
             onPick = onElevation,
             onGo = { onElevation(it.coerceIn(0.0, state.rotor.elMaxDeg)) },
             onStop = onStopEl,
+            onSaveFavorite = onSaveFavorite,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -686,9 +866,11 @@ private fun LandscapeAxisColumn(
     onPick: (Double) -> Unit,
     onGo: (Double) -> Unit,
     onStop: () -> Unit,
+    onSaveFavorite: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var angleDraft by remember { mutableStateOf("") }
+    var showSaveDialog by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val online = if (azimuth) state.rotor.azOnline else state.rotor.elOnline
     val offline = !state.rotor.connected || !online
@@ -860,6 +1042,21 @@ private fun LandscapeAxisColumn(
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
+            BridgeButton(
+                text = "SAVE",
+                onClick = { showSaveDialog = true },
+                compact = true,
+                modifier = Modifier.fillMaxHeight(),
+            )
+        }
+        if (showSaveDialog) {
+            SaveFavoriteNameDialog(
+                onDismiss = { showSaveDialog = false },
+                onConfirm = { name ->
+                    onSaveFavorite(name)
+                    showSaveDialog = false
+                },
+            )
         }
     }
 }
@@ -871,9 +1068,11 @@ private fun AzimuthPage(
     connected: Boolean,
     onAzimuth: (Double) -> Unit,
     onStop: () -> Unit,
+    onSaveFavorite: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var angleDraft by remember { mutableStateOf("") }
+    var showSaveDialog by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     fun goAngle() {
@@ -963,6 +1162,21 @@ private fun AzimuthPage(
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
+            BridgeButton(
+                text = "SAVE",
+                onClick = { showSaveDialog = true },
+                compact = true,
+                modifier = Modifier.fillMaxHeight(),
+            )
+        }
+        if (showSaveDialog) {
+            SaveFavoriteNameDialog(
+                onDismiss = { showSaveDialog = false },
+                onConfirm = { name ->
+                    onSaveFavorite(name)
+                    showSaveDialog = false
+                },
+            )
         }
     }
 }
@@ -974,9 +1188,11 @@ private fun ElevationPage(
     connected: Boolean,
     onElevation: (Double) -> Unit,
     onStop: () -> Unit,
+    onSaveFavorite: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var angleDraft by remember { mutableStateOf("") }
+    var showSaveDialog by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     fun goAngle() {
@@ -1047,7 +1263,73 @@ private fun ElevationPage(
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
+            BridgeButton(
+                text = "SAVE",
+                onClick = { showSaveDialog = true },
+                compact = true,
+                modifier = Modifier.fillMaxHeight(),
+            )
         }
+        if (showSaveDialog) {
+            SaveFavoriteNameDialog(
+                onDismiss = { showSaveDialog = false },
+                onConfirm = { name ->
+                    onSaveFavorite(name)
+                    showSaveDialog = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SaveFavoriteNameDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Favorit speichern", color = BridgeText) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                label = { Text("Name") },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = BridgeText,
+                    unfocusedTextColor = BridgeText,
+                    focusedBorderColor = BridgeAccent,
+                    unfocusedBorderColor = BridgeButtonBorder,
+                    focusedLabelColor = BridgeMuted,
+                    unfocusedLabelColor = BridgeMuted,
+                    cursorColor = BridgeAccent,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name.trim()) },
+                enabled = name.isNotBlank(),
+            ) {
+                Text("Speichern", color = BridgeAccent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Abbrechen", color = BridgeMuted)
+            }
+        },
+        containerColor = BridgePanel,
+    )
+}
+
+private fun formatFavoriteLabel(fav: PositionFavorite, elevationEnabled: Boolean): String {
+    return if (elevationEnabled) {
+        "%s · AZ %.1f° / EL %.1f°".format(fav.name, fav.azDeg, fav.elDeg)
+    } else {
+        "%s · AZ %.1f°".format(fav.name, fav.azDeg)
     }
 }
 

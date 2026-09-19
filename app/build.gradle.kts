@@ -4,6 +4,22 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/** Version aus [AppVersion] / Version.kt (einzige Quelle). */
+fun readAppVersion(): Pair<String, Int> {
+    val text = file("src/main/java/de/dk8de/rotorapp/Version.kt").readText()
+    fun constInt(name: String): Int =
+        Regex("""const val $name\s*=\s*(\d+)""").find(text)?.groupValues?.get(1)?.toInt()
+            ?: error("Version.kt: $name nicht gefunden")
+    val major = constInt("MAJOR")
+    val minor = constInt("MINOR")
+    val patch = constInt("PATCH")
+    val name = "$major.$minor.$patch"
+    val code = major * 10_000 + minor * 100 + patch
+    return name to code
+}
+
+val (appVersionName, appVersionCode) = readAppVersion()
+
 android {
     namespace = "de.dk8de.rotorapp"
     compileSdk = 35
@@ -12,14 +28,16 @@ android {
         applicationId = "de.dk8de.rotorapp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Sideload / GitHub-Release ohne eigenen Keystore
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

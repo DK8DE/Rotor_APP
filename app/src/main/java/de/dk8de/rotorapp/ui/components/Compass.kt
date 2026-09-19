@@ -1,15 +1,13 @@
 package de.dk8de.rotorapp.ui.components
 
+import android.content.Context
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -43,9 +41,23 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import android.graphics.BitmapFactory
+
+/** Prozessweiter Cache — Windrose nicht bei jedem Pager-Wechsel neu dekodieren. */
+private object WindroseCache {
+    @Volatile
+    private var cached: ImageBitmap? = null
+
+    fun get(context: Context): ImageBitmap? {
+        cached?.let { return it }
+        synchronized(this) {
+            cached?.let { return it }
+            val bmp = BitmapFactory.decodeResource(context.resources, R.drawable.windrose)
+                ?.asImageBitmap()
+            cached = bmp
+            return bmp
+        }
+    }
+}
 
 /**
  * Azimuth-Kompass: Ist/Soll nur zeichnen.
@@ -87,13 +99,7 @@ fun AzimuthCompass(
     hudBottomLeft: Pair<String, String>? = null,
 ) {
     val context = LocalContext.current
-    var windrose by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(Unit) {
-        windrose = withContext(Dispatchers.Default) {
-            BitmapFactory.decodeResource(context.resources, R.drawable.windrose)
-                ?.asImageBitmap()
-        }
-    }
+    val windrose = remember(context) { WindroseCache.get(context) }
     val portrait =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     // Hochkant: Titel 2/3 größer; Werte etwas weniger (ragen sonst in den Kreis)
@@ -123,7 +129,8 @@ fun AzimuthCompass(
         // Wie Bridge: Farbringe 7px + 1px Spalt außerhalb des weißen Kreises
         val ringW = 7.dp.toPx()
         val gapW = 1.dp.toPx()
-        val showStrom = showStromRing && !stromBins36.isNullOrEmpty()
+        // Ring auch ohne Messwerte: fehlende Segmente → Grün
+        val showStrom = showStromRing
         val showDwell = showDwellRing && !dwellSeconds.isNullOrEmpty()
         var outerSlots = 0
         if (showStrom) outerSlots++
@@ -357,15 +364,14 @@ fun AzimuthCompass(
 
         var ringBase = r
         if (showStrom) {
-            val vals = stromBins36!!
+            val vals = stromBins36.orEmpty()
             val usable = vals.filter { it > 0 }
             val vMin = usable.minOrNull() ?: 0
             val vMax = usable.maxOrNull() ?: vMin
             val nStrom = 36
             drawOuterHeatRing(ringBase, nStrom) { i ->
                 val v = vals.getOrElse(i) { 0 }
-                if (v <= 0) null
-                else stromBinHeatmapColor(v, stromHeatmapScale, vMin, vMax)
+                stromBinHeatmapColor(v, stromHeatmapScale, vMin, vMax)
             }
             ringBase += ringW
             if (showDwell) {
@@ -480,7 +486,8 @@ fun ElevationCompass(
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     val hudTitleScale = if (portrait) 5f / 3f else 1f
     val hudValueScale = if (portrait) 1.45f else 1f
-    val showStrom = showStromRing && !stromBins36.isNullOrEmpty()
+    // Ring auch ohne Messwerte: fehlende Segmente → Grün
+    val showStrom = showStromRing
 
     Canvas(
         modifier = modifier
@@ -616,12 +623,15 @@ fun ElevationCompass(
 
         // Strom-Heatmap außen am Begrenzungsstrich (Bridge: 26 nutzbare von 36 Bins)
         if (showStrom) {
-            val vals = stromBins36!!
+            val vals = stromBins36.orEmpty()
             val skip = 5
             val used = if (vals.size >= 36) {
                 vals.subList(skip, 36 - skip)
-            } else {
+            } else if (vals.isNotEmpty()) {
                 vals
+            } else {
+                // Noch keine Daten: volle nutzbare Spanne grün
+                List(26) { 0 }
             }
             val nUsed = used.size.coerceAtLeast(1)
             val step = sweepMax / nUsed
@@ -631,7 +641,6 @@ fun ElevationCompass(
             val arcR = r + ringW / 2f
             for (i in 0 until nUsed) {
                 val v = used.getOrElse(i) { 0 }
-                if (v <= 0) continue
                 val color = stromBinHeatmapColor(v, stromHeatmapScale, vMin, vMax)
                 if (color.alpha <= 0f) continue
                 val a0 = i * step

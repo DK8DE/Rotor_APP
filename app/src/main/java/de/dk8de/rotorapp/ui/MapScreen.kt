@@ -18,21 +18,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -62,12 +56,14 @@ import de.dk8de.rotorapp.ui.theme.BridgePanel
 import de.dk8de.rotorapp.ui.theme.BridgeText
 import org.json.JSONArray
 import org.json.JSONObject
-@OptIn(ExperimentalMaterial3Api::class)
+
+/** Karten-Seite (Pager): Leaflet bleibt gecacht; [active] steuert Sichtbarkeit. */
 @Composable
 fun MapScreen(
     state: AppUiState,
-    onBack: () -> Unit,
     onMapClickBearing: (displayBearingDeg: Double) -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = true,
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var pageReady by remember { mutableStateOf(false) }
@@ -112,146 +108,157 @@ fun MapScreen(
         )
     }
 
-    LaunchedEffect(beamJson, pageReady, webView) {
-        if (!pageReady) return@LaunchedEffect
+    LaunchedEffect(beamJson, pageReady, webView, active) {
+        if (!pageReady || !active) return@LaunchedEffect
         val wv = webView ?: return@LaunchedEffect
         pushBeam(wv, beamJson, invalidate = true)
     }
 
-    LaunchedEffect(locatorOverlay, pageReady, webView) {
-        if (!pageReady) return@LaunchedEffect
+    LaunchedEffect(locatorOverlay, pageReady, webView, active) {
+        if (!pageReady || !active) return@LaunchedEffect
         val wv = webView ?: return@LaunchedEffect
         pushLocatorOverlay(wv, locatorOverlay)
     }
 
-    Scaffold(
-        containerColor = Color(0xFF1C1C1C),
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = BridgePanel,
-                    titleContentColor = BridgeText,
-                    navigationIconContentColor = BridgeText,
-                    actionIconContentColor = BridgeText,
-                ),
-                title = { Text("Karte") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
-                    }
-                },
-                actions = {
-                    TextButton(onClick = { locatorOverlay = !locatorOverlay }) {
-                        Text(
-                            text = if (locatorOverlay) "Locator an" else "Locator aus",
-                            color = if (locatorOverlay) BridgeText else Color(0xFF9E9E9E),
-                        )
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Box(
+    LaunchedEffect(active, pageReady, webView) {
+        val wv = webView ?: return@LaunchedEffect
+        wv.visibility = if (active) android.view.View.VISIBLE else android.view.View.INVISIBLE
+        if (active && pageReady) {
+            wv.post {
+                wv.evaluateJavascript(
+                    "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
+                    null,
+                )
+            }
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF1C1C1C)),
+    ) {
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+                .fillMaxWidth()
+                .background(BridgePanel)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            Text(
+                text = "Karte · Tippen setzt AZ",
+                color = BridgeMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+            TextButton(onClick = { locatorOverlay = !locatorOverlay }) {
+                Text(
+                    text = if (locatorOverlay) "Locator an" else "Locator aus",
+                    color = if (locatorOverlay) BridgeText else Color(0xFF9E9E9E),
+                    fontSize = 13.sp,
+                )
+            }
+        }
+
+        Box(modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                @SuppressLint("SetJavaScriptEnabled")
-                WebView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                    setBackgroundColor(AndroidColor.WHITE)
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.allowFileAccess = true
-                    settings.allowContentAccess = true
-                    @Suppress("DEPRECATION")
-                    settings.allowFileAccessFromFileURLs = true
-                    @Suppress("DEPRECATION")
-                    settings.allowUniversalAccessFromFileURLs = true
-                    settings.loadWithOverviewMode = true
-                    settings.useWideViewPort = true
-                    webChromeClient = WebChromeClient()
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            pageReady = true
-                            val wv = view ?: return
-                            val init = buildMapBeamJson(
-                                latestState.value,
-                                statusLine = null,
-                                recenter = true,
-                            )
-                            pushBeam(wv, init, invalidate = true)
-                            // Leaflet braucht oft einen zweiten invalidate nach Layout
-                            wv.postDelayed({
-                                wv.evaluateJavascript(
-                                    "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
-                                    null,
+                    @SuppressLint("SetJavaScriptEnabled")
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        setBackgroundColor(AndroidColor.WHITE)
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.allowFileAccess = true
+                        settings.allowContentAccess = true
+                        @Suppress("DEPRECATION")
+                        settings.allowFileAccessFromFileURLs = true
+                        @Suppress("DEPRECATION")
+                        settings.allowUniversalAccessFromFileURLs = true
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                        webChromeClient = WebChromeClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                pageReady = true
+                                val wv = view ?: return
+                                val init = buildMapBeamJson(
+                                    latestState.value,
+                                    statusLine = null,
+                                    recenter = true,
                                 )
-                            }, 150)
-                            wv.postDelayed({
-                                wv.evaluateJavascript(
-                                    "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
-                                    null,
-                                )
-                            }, 500)
-                        }
-
-                        override fun onReceivedError(
-                            view: WebView?,
-                            request: WebResourceRequest?,
-                            error: WebResourceError?,
-                        ) {
-                            // Hauptseite fehlgeschlagen → Hinweis
-                            if (request?.isForMainFrame == true) {
-                                view?.loadData(
-                                    "<html><body style='background:#222;color:#fff;font-family:sans-serif;padding:16px'>" +
-                                        "<p>Karte konnte nicht geladen werden.</p>" +
-                                        "<p>${error?.description ?: "?"}</p></body></html>",
-                                    "text/html",
-                                    "utf-8",
-                                )
+                                pushBeam(wv, init, invalidate = true)
+                                wv.postDelayed({
+                                    wv.evaluateJavascript(
+                                        "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
+                                        null,
+                                    )
+                                }, 150)
+                                wv.postDelayed({
+                                    wv.evaluateJavascript(
+                                        "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
+                                        null,
+                                    )
+                                }, 500)
                             }
-                        }
-                    }
-                    addJavascriptInterface(
-                        object {
-                            @JavascriptInterface
-                            fun onMapClick(lat: Double, lon: Double) {
-                                val s = latestState.value
-                                val (slat, slon) = s.displayPrefs.effectiveLatLon()
-                                val bearing = GeoUtils.bearingDeg(slat, slon, lat, lon)
-                                val dist = GeoUtils.haversineKm(slat, slon, lat, lon)
-                                mainHandler.post {
-                                    lastStatus =
-                                        "Ziel ${"%.1f".format(bearing)}° · ${"%.1f".format(dist)} km"
-                                    latestOnClick.value(bearing)
+
+                            override fun onReceivedError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                error: WebResourceError?,
+                            ) {
+                                if (request?.isForMainFrame == true) {
+                                    view?.loadData(
+                                        "<html><body style='background:#222;color:#fff;font-family:sans-serif;padding:16px'>" +
+                                            "<p>Karte konnte nicht geladen werden.</p>" +
+                                            "<p>${error?.description ?: "?"}</p></body></html>",
+                                        "text/html",
+                                        "utf-8",
+                                    )
                                 }
                             }
-                        },
-                        "RotorMap",
-                    )
-                    // Base-URL damit relative leaflet.css/js aus assets/map geladen werden
-                    val html = ctx.assets.open("map/map.html").bufferedReader().use { it.readText() }
-                    loadDataWithBaseURL(
-                        "file:///android_asset/map/",
-                        html,
-                        "text/html",
-                        "utf-8",
-                        null,
-                    )
-                    webView = this
-                }
-            },
+                        }
+                        addJavascriptInterface(
+                            object {
+                                @JavascriptInterface
+                                fun onMapClick(lat: Double, lon: Double) {
+                                    val s = latestState.value
+                                    val (slat, slon) = s.displayPrefs.effectiveLatLon()
+                                    val bearing = GeoUtils.bearingDeg(slat, slon, lat, lon)
+                                    val dist = GeoUtils.haversineKm(slat, slon, lat, lon)
+                                    mainHandler.post {
+                                        lastStatus =
+                                            "Ziel ${"%.1f".format(bearing)}° · ${"%.1f".format(dist)} km"
+                                        latestOnClick.value(bearing)
+                                    }
+                                }
+                            },
+                            "RotorMap",
+                        )
+                        val html = ctx.assets.open("map/map.html").bufferedReader().use { it.readText() }
+                        loadDataWithBaseURL(
+                            "file:///android_asset/map/",
+                            html,
+                            "text/html",
+                            "utf-8",
+                            null,
+                        )
+                        webView = this
+                    }
+                },
                 update = { view ->
-                    if (pageReady) {
+                    view.visibility =
+                        if (active) android.view.View.VISIBLE else android.view.View.INVISIBLE
+                    if (pageReady && active) {
                         view.post {
                             view.evaluateJavascript(
                                 "try{if(window.map){window.map.invalidateSize(true);}}catch(e){}",
@@ -262,12 +269,14 @@ fun MapScreen(
                 },
             )
 
-            MapWeatherOverlay(
-                state = state,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp),
-            )
+            if (active) {
+                MapWeatherOverlay(
+                    state = state,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                )
+            }
         }
     }
 
@@ -330,7 +339,6 @@ private fun MapWeatherOverlay(
                 val cx = size.width / 2f
                 val cy = size.height / 2f
                 val r = size.minDimension * 0.38f
-                // leichter Kreis als Bezug
                 drawCircle(
                     color = Color(0x66FFFFFF),
                     radius = r * 1.15f,

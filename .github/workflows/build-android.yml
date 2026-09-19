@@ -1,0 +1,97 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src/main/java/de/dk8de/rotorapp/Version.kt'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version aus Version.kt lesen
+        id: ver
+        shell: bash
+        run: |
+          FILE="app/src/main/java/de/dk8de/rotorapp/Version.kt"
+          major=$(grep -E 'const val MAJOR\s*=' "$FILE" | sed -E 's/.*MAJOR\s*=\s*([0-9]+).*/\1/')
+          minor=$(grep -E 'const val MINOR\s*=' "$FILE" | sed -E 's/.*MINOR\s*=\s*([0-9]+).*/\1/')
+          patch=$(grep -E 'const val PATCH\s*=' "$FILE" | sed -E 's/.*PATCH\s*=\s*([0-9]+).*/\1/')
+          version="${major}.${minor}.${patch}"
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Gelesen: ${tag}"
+
+      - name: Prüfen ob Tag schon existiert
+        id: tagcheck
+        shell: bash
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} existiert bereits — Release wird übersprungen."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} ist neu — Release wird erstellt."
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle Wrapper ausführbar
+        run: chmod +x gradlew
+
+      - name: APK bauen (release)
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: APK umbenennen
+        shell: bash
+        run: |
+          SRC="app/build/outputs/apk/release/app-release.apk"
+          OUT="RotorApp-${{ steps.ver.outputs.tag }}.apk"
+          test -f "$SRC"
+          cp "$SRC" "$OUT"
+          ls -lh "$OUT"
+          echo "apk=${OUT}" >> "$GITHUB_OUTPUT"
+
+      - name: Build-Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: RotorApp-${{ steps.ver.outputs.tag }}
+          path: RotorApp-${{ steps.ver.outputs.tag }}.apk
+          if-no-files-found: error
+
+      - name: GitHub Release erstellen
+        if: steps.tagcheck.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Rotor App ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: RotorApp-${{ steps.ver.outputs.tag }}.apk
+          body: |
+            ## Rotor App ${{ steps.ver.outputs.version }}
+
+            Installierbare Release-APK (mit Debug-Keystore signiert, Sideload).
+
+            Datei: `RotorApp-${{ steps.ver.outputs.tag }}.apk`

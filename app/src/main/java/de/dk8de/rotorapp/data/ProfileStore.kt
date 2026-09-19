@@ -17,6 +17,14 @@ import org.json.JSONObject
 
 private val Context.profileDataStore by preferencesDataStore(name = "rotor_profiles")
 
+/** Gespeicherte Rotor-Position (Favorit). */
+data class PositionFavorite(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val azDeg: Double = 0.0,
+    val elDeg: Double = 0.0,
+)
+
 /** App-weite Anzeige-Einstellungen (nicht pro Rotor). */
 data class UiDisplayPrefs(
     val showBeamOverlay: Boolean = true,
@@ -64,12 +72,17 @@ class ProfileStore(private val context: Context) {
     private val keyLocationLat = doublePreferencesKey("location_lat")
     private val keyLocationLon = doublePreferencesKey("location_lon")
     private val keyLocationLocator = stringPreferencesKey("location_locator")
+    private val keyFavorites = stringPreferencesKey("position_favorites_json")
 
     val profiles: Flow<List<RotorProfile>> = context.profileDataStore.data.map { prefs ->
         decodeProfiles(prefs[keyProfiles])
     }
 
     val activeProfileId: Flow<String?> = context.profileDataStore.data.map { it[keyActiveId] }
+
+    val positionFavorites: Flow<List<PositionFavorite>> = context.profileDataStore.data.map { prefs ->
+        decodeFavorites(prefs[keyFavorites])
+    }
 
     val uiDisplayPrefs: Flow<UiDisplayPrefs> = context.profileDataStore.data.map { prefs ->
         UiDisplayPrefs(
@@ -152,6 +165,29 @@ class ProfileStore(private val context: Context) {
         }
     }
 
+    suspend fun addPositionFavorite(name: String, azDeg: Double, elDeg: Double) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        context.profileDataStore.edit { prefs ->
+            val current = decodeFavorites(prefs[keyFavorites]).toMutableList()
+            current.add(
+                PositionFavorite(
+                    name = trimmed,
+                    azDeg = wrapAz(azDeg),
+                    elDeg = elDeg.coerceIn(0.0, 180.0),
+                ),
+            )
+            prefs[keyFavorites] = encodeFavorites(current)
+        }
+    }
+
+    suspend fun deletePositionFavorite(id: String) {
+        context.profileDataStore.edit { prefs ->
+            val current = decodeFavorites(prefs[keyFavorites]).filterNot { it.id == id }
+            prefs[keyFavorites] = encodeFavorites(current)
+        }
+    }
+
     suspend fun saveProfiles(list: List<RotorProfile>, activeId: String?) {
         context.profileDataStore.edit { prefs ->
             prefs[keyProfiles] = encodeProfiles(list)
@@ -195,6 +231,48 @@ class ProfileStore(private val context: Context) {
         fun defaultProfiles(): List<RotorProfile> = listOf(
             RotorProfile(name = "Standard", host = "192.168.0.246", port = 8886)
         )
+
+        private fun wrapAz(deg: Double): Double {
+            var w = deg % 360.0
+            if (w < 0) w += 360.0
+            return w
+        }
+
+        fun encodeFavorites(list: List<PositionFavorite>): String {
+            val arr = JSONArray()
+            list.forEach { f ->
+                arr.put(
+                    JSONObject()
+                        .put("id", f.id)
+                        .put("name", f.name)
+                        .put("azDeg", f.azDeg)
+                        .put("elDeg", f.elDeg),
+                )
+            }
+            return arr.toString()
+        }
+
+        fun decodeFavorites(raw: String?): List<PositionFavorite> {
+            if (raw.isNullOrBlank()) return emptyList()
+            return try {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        add(
+                            PositionFavorite(
+                                id = o.optString("id", java.util.UUID.randomUUID().toString()),
+                                name = o.optString("name", "Favorit"),
+                                azDeg = o.optDouble("azDeg", 0.0),
+                                elDeg = o.optDouble("elDeg", 0.0),
+                            ),
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
 
         fun encodeProfiles(list: List<RotorProfile>): String {
             val arr = JSONArray()

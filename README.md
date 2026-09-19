@@ -29,10 +29,20 @@ silent_install.bat
 
 Danach ggf. **PC neu starten**. Wenn `sc query aehd` weiterhin `STOPPED` zeigt: Virtualisierung im BIOS aktivieren bzw. Konflikt mit Hyper-V/WSL prüfen (Windows-Features „Windows-Hypervisorplattform“). Alternativ physisches Gerät per USB mit USB-Debugging.
 
+## Version / GitHub Release
+
+Die Versionsnummer steht nur in `app/src/main/java/de/dk8de/rotorapp/Version.kt`
+(`MAJOR` / `MINOR` / `PATCH`). Gradle und die App lesen sie von dort.
+
+Nach Push auf `main` mit geänderter `Version.kt` baut GitHub Actions die Release-APK
+und legt ein Release mit Tag `vX.Y.Z` an (falls der Tag noch nicht existiert).
+Manuell: Actions → **Build Android APK** → Run workflow.
+
 ## Bauen
 
 ```powershell
 .\gradlew.bat assembleDebug
+.\gradlew.bat assembleRelease
 .\gradlew.bat test
 ```
 

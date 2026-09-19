@@ -1,19 +1,21 @@
 package de.dk8de.rotorapp.net
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 /**
  * Raw TCP link that transports RS485 ASCII frames (#...$) without extra wrapping.
+ * Verbindungen laufen bewusst über WLAN (nicht Mobilfunk).
  */
-class TcpLink {
+class TcpLink(context: Context) {
+    private val appContext = context.applicationContext
     private val mutex = Mutex()
     private var socket: Socket? = null
     private var input: BufferedInputStream? = null
@@ -27,10 +29,30 @@ class TcpLink {
     suspend fun connect(host: String, port: Int, timeoutMs: Int = 3000) = withContext(Dispatchers.IO) {
         mutex.withLock {
             disconnectLocked()
-            val s = Socket()
-            s.tcpNoDelay = true
-            s.keepAlive = true
-            s.connect(InetSocketAddress(host, port), timeoutMs)
+            val wifi = WifiNetworkBinder.awaitWifiNetwork(appContext)
+            val s = try {
+                if (wifi != null) {
+                    // Bevorzugt WLAN (auch wenn Mobilfunk parallel „Default“ ist)
+                    WifiNetworkBinder.connectViaWifi(wifi, host, port, timeoutMs)
+                } else {
+                    // Nur WLAN / Default-Route — ohne Network-Handle trotzdem verbinden
+                    WifiNetworkBinder.connectDefault(host, port, timeoutMs)
+                }
+            } catch (first: Exception) {
+                // Wi‑Fi-Bind schlug fehl → einmal Default-Routing versuchen
+                if (wifi != null) {
+                    try {
+                        WifiNetworkBinder.connectDefault(host, port, timeoutMs)
+                    } catch (second: Exception) {
+                        error(
+                            "Verbindung fehlgeschlagen (${first.message ?: first}). " +
+                                "Fallback: ${second.message ?: second}",
+                        )
+                    }
+                } else {
+                    throw first
+                }
+            }
             // Kurz: schnelle Timeouts zwischen Befehlen (ACK kommt meist sofort)
             s.soTimeout = 50
             socket = s
