@@ -1677,7 +1677,8 @@ class RotorRepository(context: android.content.Context) {
     }
 
     /**
-     * Parken AZ: GETHOMEPOS lesen und per SETPOSDG anfahren (Rotorwinkel, kein Dipol-Offset).
+     * Parken: GETHOMEPOS je Achse lesen und per SETPOSDG anfahren
+     * (AZ immer; EL wenn im Profil aktiv — Rotorwinkel, kein Dipol-Offset).
      */
     suspend fun parkAzimuth(): Boolean = ioMutex.withLock {
         client.clearAbortAwait()
@@ -1690,28 +1691,60 @@ class RotorRepository(context: android.content.Context) {
             )
             return@withLock false
         }
-        val home = runCatching {
-            client.getHomePos(profile.slaveAz, timeoutMs = 800)
-        }.getOrNull()
-        if (home == null) {
+        val wantEl = profile.enableEl
+        if (wantEl && (!s.elReferenced || s.elHoming)) {
             _state.value = s.copy(
-                lastLog = "GETHOMEPOS fehlgeschlagen",
-                statusText = "GETHOMEPOS fehlgeschlagen",
+                lastLog = "EL nicht referenziert – HOME nötig",
+                statusText = "EL nicht referenziert – HOME nötig",
             )
             return@withLock false
         }
-        val target = AntennaMath.wrap360(home)
+
+        val homeAz = runCatching {
+            client.getHomePos(profile.slaveAz, timeoutMs = 800)
+        }.getOrNull()
+        if (homeAz == null) {
+            _state.value = s.copy(
+                lastLog = "GETHOMEPOS AZ fehlgeschlagen",
+                statusText = "GETHOMEPOS AZ fehlgeschlagen",
+            )
+            return@withLock false
+        }
+        val homeEl = if (wantEl) {
+            runCatching {
+                client.getHomePos(profile.slaveEl, timeoutMs = 800)
+            }.getOrNull()
+        } else {
+            null
+        }
+        if (wantEl && homeEl == null) {
+            _state.value = s.copy(
+                lastLog = "GETHOMEPOS EL fehlgeschlagen",
+                statusText = "GETHOMEPOS EL fehlgeschlagen",
+            )
+            return@withLock false
+        }
+
+        val targetAz = AntennaMath.wrap360(homeAz)
+        val targetEl = homeEl?.let { clampEl(it) }
         azDipoleLastRotorAz = null
         _state.value = s.copy(
-            azTarget = target,
+            azTarget = targetAz,
             azCompassTarget = null,
             azDipoleDisplayBearing = null,
+            elTarget = targetEl ?: s.elTarget,
+            elCompassTarget = if (targetEl != null) null else s.elCompassTarget,
             moving = true,
-            lastLog = "Parken AZ SETPOSDG ${"%.1f".format(target)}° (GETHOMEPOS)",
+            lastLog = buildString {
+                append("Parken AZ ${"%.1f".format(targetAz)}°")
+                if (targetEl != null) append(" / EL ${"%.1f".format(targetEl)}°")
+                append(" (GETHOMEPOS)")
+            },
             statusText = faultStatusText(s),
         )
-        val ok = client.setPosDg(profile.slaveAz, target)
-        if (ok) {
+
+        val okAz = client.setPosDg(profile.slaveAz, targetAz)
+        if (okAz) {
             azIgnoreCcUntilMs = SystemClock.elapsedRealtime() + SETPOSCC_SUPPRESS_MS
             armSetPosPollGrace()
             val az = runCatching {
@@ -1735,8 +1768,38 @@ class RotorRepository(context: android.content.Context) {
                 lastLog = "Parken AZ fehlgeschlagen",
                 statusText = "Parken AZ fehlgeschlagen",
             )
+            return@withLock false
         }
-        ok
+
+        if (targetEl == null) return@withLock okAz
+
+        val okEl = client.setPosDg(profile.slaveEl, targetEl)
+        if (okEl) {
+            elIgnoreCcUntilMs = SystemClock.elapsedRealtime() + SETPOSCC_SUPPRESS_MS
+            armSetPosPollGrace()
+            val el = runCatching {
+                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+            }.getOrNull()
+            if (el != null) {
+                elFailStreak = 0
+                lastOkPollMs = System.currentTimeMillis()
+                val nowMs = SystemClock.elapsedRealtime()
+                elSmoother.setDynamic(true)
+                elSmoother.updateSample(el.toFloat(), nowMs = nowMs, expectedPeriodS = 0.25f)
+                _state.value = _state.value.copy(
+                    elOnline = true,
+                    elDeg = el,
+                    elSmoothDeg = elSmoother.current()?.toDouble(),
+                    moving = true,
+                )
+            }
+        } else if (!client.isAwaitAborted) {
+            _state.value = _state.value.copy(
+                lastLog = "Parken EL fehlgeschlagen",
+                statusText = "Parken EL fehlgeschlagen",
+            )
+        }
+        okAz && okEl
     }
 
     suspend fun setElevation(deg: Double): Boolean = ioMutex.withLock {

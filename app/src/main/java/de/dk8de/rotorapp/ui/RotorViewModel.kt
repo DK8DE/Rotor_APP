@@ -196,7 +196,7 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Parken: GETHOMEPOS → SETPOSDG auf Hom-Winkel (AZ). */
+    /** Parken: GETHOMEPOS → SETPOSDG (AZ; mit EL wenn aktiv). */
     fun parkAzimuth() {
         val gen = ++motionGen
         repo.beginUserCommand()

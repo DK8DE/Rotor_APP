@@ -626,7 +626,9 @@ private fun QuickSettingsPage(
         BridgeButton(
             text = "PARKEN",
             onClick = onParkAzimuth,
-            enabled = connected && state.rotor.azReferenced && !state.rotor.azHoming,
+            enabled = connected &&
+                state.rotor.azReferenced && !state.rotor.azHoming &&
+                (!elevationEnabled || (state.rotor.elReferenced && !state.rotor.elHoming)),
             compact = true,
             modifier = Modifier
                 .fillMaxWidth()
