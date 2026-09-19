@@ -127,8 +127,9 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                     connectJob = viewModelScope.launch {
                         runCatching { repo.applyProfile(p, reconnect = true) }
                         if (repo.state.value.connected) {
-                            // Antennen nachziehen (Temp/Wind schon im Connect)
-                            launch {
+                            // Fallback falls Connect-Bootstrap Antennen verpasst hat
+                            val needAnt = repo.state.value.antennas.none { it.openingDeg > 0.5 }
+                            if (needAnt) {
                                 runCatching { repo.refreshAntennas() }
                             }
                             startPolling()

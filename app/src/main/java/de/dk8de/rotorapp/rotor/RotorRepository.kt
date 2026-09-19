@@ -485,8 +485,8 @@ class RotorRepository(context: android.content.Context) {
             elErrorCode = 0,
             azWarnIds = emptyList(),
             elWarnIds = emptyList(),
-            antennas = listOf(AntennaSlot(), AntennaSlot(), AntennaSlot()),
-            selectedAntenna = 1,
+            // Antennen-Cache behalten — sonst verschwindet das Öffnungswinkel-Overlay,
+            // bis refreshAntennas erneut erfolgreich ist (kann bei Bus-Last scheitern).
             azDipoleDisplayBearing = null,
             stromBins36 = null,
             stromBinsEl36 = null,
@@ -550,6 +550,8 @@ class RotorRepository(context: android.content.Context) {
                 runCatching { refreshWarningsLocked() }
                 runCatching { refreshTempsLocked() }
             }
+            // Öffnungswinkel für Kompass-Overlay — immer nachziehen (auch bei Skip-Bootstrap)
+            runCatching { refreshAntennasLocked() }
             // Wind: GETWINDENABLE → Haken; SET nur wenn Profil gerade Wind geändert hat
             runCatching { syncWindEnableOnConnectLocked() }
             runCatching { refreshWindLocked(force = true) }
@@ -1977,20 +1979,47 @@ class RotorRepository(context: android.content.Context) {
     private suspend fun refreshAntennasLocked() {
         val dst = profile.slaveAz
         val to = 450L
+        val prevList = _state.value.antennas
         val slots = (1..3).map { n ->
             val off = runCatching { client.getAntOff(dst, n, timeoutMs = to) }.getOrNull()
             val ang = runCatching { client.getAntAngle(dst, n, timeoutMs = to) }.getOrNull()
             val dis = runCatching { client.getAntDis(dst, n, timeoutMs = to) }.getOrNull()
             val dp = runCatching { client.getAntDp(dst, n, timeoutMs = to) }.getOrNull()
             val name = runCatching { client.getAntName(dst, n, timeoutMs = to) }.getOrNull()
-            val prev = _state.value.antennas.getOrNull(n - 1) ?: AntennaSlot()
+            val prev = prevList.getOrNull(n - 1) ?: AntennaSlot()
             AntennaSlot(
                 offsetDeg = off ?: prev.offsetDeg,
+                // Timeout/NAK: alten Öffnungswinkel behalten (Overlay nicht „löschen“)
                 openingDeg = ang ?: prev.openingDeg,
                 rangeKm = dis ?: prev.rangeKm,
                 dipole = dp ?: prev.dipole,
                 name = name ?: prev.name,
             )
+        }
+        // Komplett fehlgeschlagenes Lesen → State nicht mit leeren Defaults überschreiben
+        val anyRead = slots.zip(prevList.ifEmpty { List(3) { AntennaSlot() } }).any { (neu, alt) ->
+            neu.openingDeg != alt.openingDeg ||
+                neu.offsetDeg != alt.offsetDeg ||
+                neu.name != alt.name ||
+                neu.dipole != alt.dipole ||
+                neu.rangeKm != alt.rangeKm
+        }
+        val hadCache = prevList.any { it.openingDeg > 0.5 || it.name.isNotBlank() }
+        if (!anyRead && hadCache) {
+            // Nur Slot-Auswahl ggf. aktualisieren
+            var selected = _state.value.selectedAntenna
+            val ctrl = profile.controllerId
+            if (ctrl in 1..254) {
+                val hw = runCatching { client.getAntennaSelect(ctrl, timeoutMs = to) }.getOrNull()
+                if (hw != null) selected = hw
+            }
+            if (selected != _state.value.selectedAntenna) {
+                _state.value = _state.value.copy(
+                    selectedAntenna = selected.coerceIn(1, 3),
+                    lastLog = "Antennen-Cache behalten · Slot $selected",
+                )
+            }
+            return
         }
         var selected = _state.value.selectedAntenna
         val ctrl = profile.controllerId
