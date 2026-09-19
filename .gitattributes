@@ -1,0 +1,4 @@
+# Gradle Wrapper: auf Linux-CI unbedingt LF
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+*.jar binary
