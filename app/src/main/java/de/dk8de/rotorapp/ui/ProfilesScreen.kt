@@ -46,6 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
+import de.dk8de.rotorapp.AppLanguage
+import de.dk8de.rotorapp.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -81,6 +84,7 @@ fun ProfilesScreen(
     onHeatmapScaleSave: (custom: Boolean, thrBlue: Int, normMin: Int, normMax: Int, thrRed: Int) -> Unit,
     onHeatmapFromBins: () -> Unit,
     onLocationSave: (lat: Double, lon: Double, locator: String) -> Unit,
+    onAppLanguageChange: (String) -> Unit,
 ) {
     var editing by remember { mutableStateOf<RotorProfile?>(null) }
 
@@ -100,6 +104,8 @@ fun ProfilesScreen(
         return
     }
 
+    val newProfileName = stringResource(R.string.profile_new_name)
+
     Scaffold(
         containerColor = BridgeBg,
         topBar = {
@@ -110,10 +116,10 @@ fun ProfilesScreen(
                     navigationIconContentColor = BridgeText,
                     actionIconContentColor = BridgeText,
                 ),
-                title = { Text("Einstellungen") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
             )
@@ -121,12 +127,12 @@ fun ProfilesScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    editing = RotorProfile(id = UUID.randomUUID().toString(), name = "Neu")
+                    editing = RotorProfile(id = UUID.randomUUID().toString(), name = newProfileName)
                 },
                 containerColor = BridgeAccent,
                 contentColor = BridgeBg,
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Neu")
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_add))
             }
         },
     ) { padding ->
@@ -138,7 +144,7 @@ fun ProfilesScreen(
             // —— 1. Profile ——
             item {
                 Text(
-                    "Profile",
+                    stringResource(R.string.section_profiles),
                     color = BridgeAccent,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -146,12 +152,21 @@ fun ProfilesScreen(
             }
             items(state.profiles, key = { it.id }) { profile ->
                 val active = profile.id == state.activeProfile?.id
+                val summary = profile.summary(
+                    azElLabel = stringResource(R.string.profile_summary_az_el),
+                    azOnlyLabel = stringResource(R.string.profile_summary_az_only),
+                    windSuffix = stringResource(R.string.profile_summary_wind),
+                )
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = BridgeBg),
                     headlineContent = { Text(profile.name, color = BridgeText) },
                     supportingContent = {
                         Text(
-                            if (active) "aktiv · ${profile.summary()}" else profile.summary(),
+                            if (active) {
+                                stringResource(R.string.profile_active, summary)
+                            } else {
+                                summary
+                            },
                             color = if (active) BridgeIst else BridgeText.copy(alpha = 0.7f),
                         )
                     },
@@ -164,10 +179,10 @@ fun ProfilesScreen(
                     trailingContent = {
                         Row {
                             IconButton(onClick = { editing = profile }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Bearbeiten", tint = BridgeText)
+                                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit), tint = BridgeText)
                             }
                             IconButton(onClick = { onDelete(profile.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Löschen", tint = BridgeText)
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_delete), tint = BridgeText)
                             }
                         }
                     },
@@ -177,18 +192,27 @@ fun ProfilesScreen(
                 )
             }
 
+            // —— Sprache ——
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                LanguageSection(
+                    selected = state.displayPrefs.appLanguage,
+                    onSelect = onAppLanguageChange,
+                )
+            }
+
             // —— 2. Antennen ——
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    "Antennen (AZ-Rotor)",
+                    stringResource(R.string.section_antennas),
                     color = BridgeAccent,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
                 if (!state.rotor.connected) {
                     Text(
-                        "Verbinden, um Antennenwerte vom Rotor zu lesen und zu speichern.",
+                        stringResource(R.string.antennas_connect_hint),
                         color = BridgeMuted,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
@@ -211,13 +235,13 @@ fun ProfilesScreen(
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    "Kompass-Anzeige",
+                    stringResource(R.string.section_compass_display),
                     color = BridgeAccent,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
                 Text(
-                    "Strom- und Standzeit-Ringe am Kompass ein-/ausblenden",
+                    stringResource(R.string.compass_rings_hint),
                     color = BridgeMuted,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
@@ -225,8 +249,8 @@ fun ProfilesScreen(
                 SettingsCheckRow(
                     checked = state.showStromRing,
                     onChange = onShowStromRingChange,
-                    title = "Stromverbrauch-Ring",
-                    subtitle = "36 Bins am Kompass, blau→rot nach Last",
+                    title = stringResource(R.string.toggle_strom_ring),
+                    subtitle = stringResource(R.string.toggle_strom_ring_sub),
                 )
                 HeatmapScaleEditor(
                     prefs = state.displayPrefs,
@@ -239,8 +263,8 @@ fun ProfilesScreen(
                 SettingsCheckRow(
                     checked = state.showDwellRing,
                     onChange = onShowDwellRingChange,
-                    title = "Standzeit-Ring",
-                    subtitle = "Farbe nach Stillstandszeit je Sektor",
+                    title = stringResource(R.string.toggle_dwell_ring),
+                    subtitle = stringResource(R.string.toggle_dwell_ring_sub),
                 )
                 DwellMinutesEditor(
                     minutes = state.dwellFullMinutes,
@@ -256,13 +280,13 @@ fun ProfilesScreen(
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    "Öffnungswinkel-Overlay",
+                    stringResource(R.string.section_beam_overlay),
                     color = BridgeAccent,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
                 Text(
-                    "Zartes Farboverlay der Antennenöffnung im AZ-Kompass",
+                    stringResource(R.string.beam_overlay_hint),
                     color = BridgeMuted,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
@@ -270,8 +294,8 @@ fun ProfilesScreen(
                 SettingsCheckRow(
                     checked = state.showBeamOverlay,
                     onChange = onShowBeamOverlayChange,
-                    title = "Öffnungswinkel anzeigen",
-                    subtitle = "Overlay je gewählter Antenne",
+                    title = stringResource(R.string.toggle_beam_overlay),
+                    subtitle = stringResource(R.string.toggle_beam_overlay_sub),
                 )
             }
 
@@ -279,13 +303,13 @@ fun ProfilesScreen(
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    "Standort (Karte)",
+                    stringResource(R.string.section_location),
                     color = BridgeAccent,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
                 Text(
-                    "QTH für Beam und Kartenklick-Peilung",
+                    stringResource(R.string.location_qth_hint),
                     color = BridgeMuted,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
@@ -319,7 +343,7 @@ private fun LocationEditor(
             onValueChange = {
                 latText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' || ch == '-' }
             },
-            label = "Breite (°)",
+            label = stringResource(R.string.field_latitude),
             keyboardType = KeyboardType.Decimal,
             keyboardActions = KeyboardActions(),
         )
@@ -328,18 +352,18 @@ private fun LocationEditor(
             onValueChange = {
                 lonText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' || ch == '-' }
             },
-            label = "Länge (°)",
+            label = stringResource(R.string.field_longitude),
             keyboardType = KeyboardType.Decimal,
             keyboardActions = KeyboardActions(),
         )
         ProfileField(
             value = locText,
             onValueChange = { locText = it.uppercase().filter { ch -> ch.isLetterOrDigit() } },
-            label = "Maidenhead-Locator (optional)",
+            label = stringResource(R.string.field_maidenhead),
             keyboardActions = KeyboardActions(),
         )
         BridgeButton(
-            text = "STANDORT SPEICHERN",
+            text = stringResource(R.string.btn_save_location),
             onClick = {
                 val loc = locText.trim()
                 val fromLoc = de.dk8de.rotorapp.geo.GeoUtils.maidenheadToLatLon(loc)
@@ -383,7 +407,7 @@ private fun DwellMinutesEditor(
         onValueChange = {
             dwellMin = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }
         },
-        label = "Standzeit bis Rot (Minuten)",
+        label = stringResource(R.string.field_dwell_red_minutes),
         keyboardType = KeyboardType.Decimal,
         enabled = true,
         keyboardActions = KeyboardActions(
@@ -395,7 +419,7 @@ private fun DwellMinutesEditor(
         modifier = Modifier.padding(horizontal = 16.dp),
     )
     BridgeButton(
-        text = "ZEIT SPEICHERN",
+        text = stringResource(R.string.btn_save_dwell_time),
         onClick = {
             val v = dwellMin.replace(',', '.').toFloatOrNull() ?: 5f
             onSave(v)
@@ -424,13 +448,13 @@ private fun HeatmapScaleEditor(
     fun parse(s: String): Int = s.toIntOrNull()?.coerceIn(0, 65535) ?: 0
 
     Text(
-        "Heatmap Azimut",
+        stringResource(R.string.heatmap_az_heading),
         color = BridgeAccent,
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
     Text(
-        "Ohne eigene Skala: Auto mit Mindestspanne (kleine Differenzen bleiben grünlich). Mit Skala: Normbereich grün, darunter blau, darüber rot.",
+        stringResource(R.string.heatmap_az_description),
         color = BridgeMuted,
         fontSize = 12.sp,
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
@@ -438,15 +462,15 @@ private fun HeatmapScaleEditor(
     SettingsCheckRow(
         checked = prefs.heatmapCustom,
         onChange = onCustomChange,
-        title = "Eigene Farb-Skala verwenden",
-        subtitle = "blau ≤ Norm min ≤ Norm max ≤ rot",
+        title = stringResource(R.string.toggle_heatmap_custom),
+        subtitle = stringResource(R.string.toggle_heatmap_custom_sub),
     )
     if (prefs.heatmapCustom) {
         val done = KeyboardActions(onDone = { focus.clearFocus() })
         ProfileField(
             value = thrBlue,
             onValueChange = { thrBlue = it.filter { ch -> ch.isDigit() } },
-            label = "Untere Schwelle (blau)",
+            label = stringResource(R.string.field_thr_blue),
             keyboardType = KeyboardType.Number,
             keyboardActions = done,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -454,7 +478,7 @@ private fun HeatmapScaleEditor(
         ProfileField(
             value = normMin,
             onValueChange = { normMin = it.filter { ch -> ch.isDigit() } },
-            label = "Normbereich min (grün)",
+            label = stringResource(R.string.field_norm_min),
             keyboardType = KeyboardType.Number,
             keyboardActions = done,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -462,7 +486,7 @@ private fun HeatmapScaleEditor(
         ProfileField(
             value = normMax,
             onValueChange = { normMax = it.filter { ch -> ch.isDigit() } },
-            label = "Normbereich max (grün)",
+            label = stringResource(R.string.field_norm_max),
             keyboardType = KeyboardType.Number,
             keyboardActions = done,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -470,13 +494,13 @@ private fun HeatmapScaleEditor(
         ProfileField(
             value = thrRed,
             onValueChange = { thrRed = it.filter { ch -> ch.isDigit() } },
-            label = "Obere Schwelle (rot)",
+            label = stringResource(R.string.field_thr_red),
             keyboardType = KeyboardType.Number,
             keyboardActions = done,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         BridgeButton(
-            text = "SKALA SPEICHERN",
+            text = stringResource(R.string.btn_save_scale),
             onClick = {
                 onSave(true, parse(thrBlue), parse(normMin), parse(normMax), parse(thrRed))
             },
@@ -486,7 +510,7 @@ private fun HeatmapScaleEditor(
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         )
         BridgeButton(
-            text = "AUS AKTUELLEN BINS",
+            text = stringResource(R.string.btn_fill_from_bins),
             onClick = onFromBins,
             enabled = hasBins,
             compact = true,
@@ -506,7 +530,7 @@ private fun DwellSectorsEditor(
     ProfileField(
         value = text,
         onValueChange = { text = it.filter { ch -> ch.isDigit() } },
-        label = "Richtungs-Einteilung (Sektoren)",
+        label = stringResource(R.string.field_dwell_sectors),
         keyboardType = KeyboardType.Number,
         enabled = true,
         keyboardActions = KeyboardActions(
@@ -519,13 +543,13 @@ private fun DwellSectorsEditor(
         modifier = Modifier.padding(horizontal = 16.dp),
     )
     Text(
-        "10–100 Sektoren (wie Bridge Standzeit-Ring)",
+        stringResource(R.string.dwell_sectors_hint),
         color = BridgeMuted,
         fontSize = 12.sp,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
     )
     BridgeButton(
-        text = "SEKTOREN SPEICHERN",
+        text = stringResource(R.string.btn_save_sectors),
         onClick = {
             val v = text.toIntOrNull()?.coerceIn(10, 100) ?: 20
             text = v.toString()
@@ -556,8 +580,8 @@ private fun WindDirModeRow(
                 onClick = { onChange("from") },
             )
             Column {
-                Text("Woher der Wind kommt", color = BridgeText)
-                Text("Pfeil zeigt zur Herkunft", color = BridgeMuted, fontSize = 12.sp)
+                Text(stringResource(R.string.wind_mode_from_title), color = BridgeText)
+                Text(stringResource(R.string.wind_mode_from_sub), color = BridgeMuted, fontSize = 12.sp)
             }
         }
         Row(
@@ -572,8 +596,8 @@ private fun WindDirModeRow(
                 onClick = { onChange("to") },
             )
             Column {
-                Text("Wohin der Wind weht", color = BridgeText)
-                Text("Pfeil zeigt in Windrichtung", color = BridgeMuted, fontSize = 12.sp)
+                Text(stringResource(R.string.wind_mode_to_title), color = BridgeText)
+                Text(stringResource(R.string.wind_mode_to_sub), color = BridgeMuted, fontSize = 12.sp)
             }
         }
     }
@@ -630,14 +654,17 @@ private fun AntennaEditorCard(
         dipole = initial.dipole
     }
 
+    val unnamed = stringResource(R.string.antenna_unnamed)
+    val dipoleSuffix = stringResource(R.string.antenna_dipole_suffix)
+    val activeSuffix = stringResource(R.string.antenna_active_suffix)
     val summary = buildString {
-        val n = name.trim().ifEmpty { "ohne Name" }
+        val n = name.trim().ifEmpty { unnamed }
         append(n)
         append(" · ")
         append(offset.ifEmpty { "0" })
         append("°")
-        if (dipole) append(" · Dipol")
-        if (selected) append(" · aktiv")
+        if (dipole) append(dipoleSuffix)
+        if (selected) append(activeSuffix)
     }
 
     Column(
@@ -654,7 +681,7 @@ private fun AntennaEditorCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Antenne $slot",
+                    text = stringResource(R.string.antenna_slot, slot),
                     color = if (selected) BridgeIst else BridgeText,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -666,7 +693,11 @@ private fun AntennaEditorCard(
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (expanded) "Zuklappen" else "Aufklappen",
+                contentDescription = if (expanded) {
+                    stringResource(R.string.cd_collapse)
+                } else {
+                    stringResource(R.string.cd_expand)
+                },
                 tint = BridgeText,
             )
         }
@@ -685,14 +716,14 @@ private fun AntennaEditorCard(
                 ProfileField(
                     value = name,
                     onValueChange = { name = it.take(9) },
-                    label = "Name (max. 9)",
+                    label = stringResource(R.string.field_antenna_name),
                     enabled = enabled,
                     keyboardActions = KeyboardActions(),
                 )
                 ProfileField(
                     value = offset,
                     onValueChange = { offset = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' } },
-                    label = "Versatzwinkel °",
+                    label = stringResource(R.string.field_offset_deg),
                     keyboardType = KeyboardType.Decimal,
                     enabled = enabled,
                     keyboardActions = KeyboardActions(),
@@ -700,7 +731,7 @@ private fun AntennaEditorCard(
                 ProfileField(
                     value = opening,
                     onValueChange = { opening = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' } },
-                    label = "Öffnungswinkel °",
+                    label = stringResource(R.string.field_opening_deg),
                     keyboardType = KeyboardType.Decimal,
                     enabled = enabled,
                     keyboardActions = KeyboardActions(),
@@ -708,7 +739,7 @@ private fun AntennaEditorCard(
                 ProfileField(
                     value = range,
                     onValueChange = { range = it.filter { ch -> ch.isDigit() } },
-                    label = "Reichweite km",
+                    label = stringResource(R.string.field_range_km),
                     keyboardType = KeyboardType.Number,
                     enabled = enabled,
                     keyboardActions = KeyboardActions(),
@@ -719,10 +750,10 @@ private fun AntennaEditorCard(
                         onCheckedChange = { if (enabled) dipole = it },
                         enabled = enabled,
                     )
-                    Text("Dipol", color = if (enabled) BridgeText else BridgeMuted)
+                    Text(stringResource(R.string.label_dipole), color = if (enabled) BridgeText else BridgeMuted)
                 }
                 BridgeButton(
-                    text = "SPEICHERN",
+                    text = stringResource(R.string.btn_save_profile),
                     onClick = {
                         onSave(
                             AntennaSlot(
@@ -799,15 +830,15 @@ private fun ProfileEditor(
                     navigationIconContentColor = BridgeText,
                     actionIconContentColor = BridgeAccent,
                 ),
-                title = { Text("Profil bearbeiten") },
+                title = { Text(stringResource(R.string.profile_edit_title)) },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
                     BridgeButton(
-                        text = "SPEICHERN",
+                        text = stringResource(R.string.btn_save_profile),
                         onClick = { commit() },
                         compact = true,
                         modifier = Modifier.padding(end = 8.dp),
@@ -827,52 +858,52 @@ private fun ProfileEditor(
             ProfileField(
                 value = name,
                 onValueChange = { name = it },
-                label = "Name",
+                label = stringResource(R.string.field_profile_name),
                 keyboardActions = saveActions,
             )
             ProfileField(
                 value = host,
                 onValueChange = { host = it },
-                label = "IP / Host",
+                label = stringResource(R.string.field_host),
                 keyboardActions = saveActions,
             )
             ProfileField(
                 value = port,
                 onValueChange = { port = it.filter { ch -> ch.isDigit() } },
-                label = "Port",
+                label = stringResource(R.string.field_port),
                 keyboardType = KeyboardType.Number,
                 keyboardActions = saveActions,
             )
             ProfileField(
                 value = masterId,
                 onValueChange = { masterId = it.filter { ch -> ch.isDigit() } },
-                label = "Master-ID",
+                label = stringResource(R.string.field_master_id),
                 keyboardType = KeyboardType.Number,
                 keyboardActions = saveActions,
             )
             ProfileField(
                 value = slaveAz,
                 onValueChange = { slaveAz = it.filter { ch -> ch.isDigit() } },
-                label = "Slave AZ",
+                label = stringResource(R.string.field_slave_az),
                 keyboardType = KeyboardType.Number,
                 keyboardActions = saveActions,
             )
             ProfileField(
                 value = controllerId,
                 onValueChange = { controllerId = it.filter { ch -> ch.isDigit() } },
-                label = "Panel-Controller-ID (SETPOSCC / GETASELECT)",
+                label = stringResource(R.string.field_controller_id),
                 keyboardType = KeyboardType.Number,
                 keyboardActions = saveActions,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = enableEl, onCheckedChange = { enableEl = it })
-                Text("Elevation vorhanden")
+                Text(stringResource(R.string.checkbox_elevation))
             }
             if (enableEl) {
                 ProfileField(
                     value = slaveEl,
                     onValueChange = { slaveEl = it.filter { ch -> ch.isDigit() } },
-                    label = "Slave EL",
+                    label = stringResource(R.string.field_slave_el),
                     keyboardType = KeyboardType.Number,
                     keyboardActions = saveActions,
                 )
@@ -880,9 +911,9 @@ private fun ProfileEditor(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = enableWind, onCheckedChange = { enableWind = it })
                 Column {
-                    Text("Wind aktiv (Anemometer)", color = BridgeText)
+                    Text(stringResource(R.string.checkbox_wind), color = BridgeText)
                     Text(
-                        "SETWINDENABLE am AZ · Abfrage nur wenn aktiv",
+                        stringResource(R.string.wind_enabled_hint),
                         color = BridgeMuted,
                         fontSize = 12.sp,
                     )
@@ -890,7 +921,7 @@ private fun ProfileEditor(
             }
             if (enableWind) {
                 Text(
-                    "Windpfeil zeigt",
+                    stringResource(R.string.wind_arrow_heading),
                     color = BridgeText,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(top = 4.dp),
@@ -901,6 +932,59 @@ private fun ProfileEditor(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun LanguageSection(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Text(
+        stringResource(R.string.section_language),
+        color = BridgeAccent,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+    )
+    LanguageOptionRow(
+        tag = AppLanguage.SYSTEM,
+        label = stringResource(R.string.language_system),
+        selected = selected,
+        onSelect = onSelect,
+    )
+    LanguageOptionRow(
+        tag = AppLanguage.DE,
+        label = stringResource(R.string.language_de),
+        selected = selected,
+        onSelect = onSelect,
+    )
+    LanguageOptionRow(
+        tag = AppLanguage.EN,
+        label = stringResource(R.string.language_en),
+        selected = selected,
+        onSelect = onSelect,
+    )
+}
+
+@Composable
+private fun LanguageOptionRow(
+    tag: String,
+    label: String,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(tag) }
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected == tag,
+            onClick = { onSelect(tag) },
+        )
+        Text(label, color = BridgeText, modifier = Modifier.padding(start = 4.dp))
     }
 }
 

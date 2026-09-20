@@ -2,9 +2,9 @@ package de.dk8de.rotorapp
 
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,7 +23,8 @@ import de.dk8de.rotorapp.ui.RotorViewModel
 import de.dk8de.rotorapp.ui.theme.RotorAppTheme
 import java.util.concurrent.atomic.AtomicBoolean
 
-class MainActivity : ComponentActivity() {
+/** AppCompatActivity nötig, damit setApplicationLocales die UI neu lädt. */
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         val keepSplash = AtomicBoolean(true)
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
                             onLocationSave = { lat, lon, loc ->
                                 vm.setLocation(lat, lon, loc)
                             },
+                            onAppLanguageChange = vm::setAppLanguage,
                         )
                     }
                 }

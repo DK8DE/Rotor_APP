@@ -1,6 +1,7 @@
 package de.dk8de.rotorapp.rotor
 
 import android.os.SystemClock
+import de.dk8de.rotorapp.R
 import de.dk8de.rotorapp.data.RotorProfile
 import de.dk8de.rotorapp.net.TcpLink
 import de.dk8de.rotorapp.ui.components.AngleSmoother
@@ -21,8 +22,8 @@ data class AntennaSlot(
     val dipole: Boolean = false,
     val name: String = "",
 ) {
-    fun label(slot: Int): String {
-        val n = name.trim().ifEmpty { "Antenne $slot" }
+    fun label(slot: Int, unnamedFallback: String): String {
+        val n = name.trim().ifEmpty { unnamedFallback }
         val off = offsetDeg.roundTo1()
         return "$n (${off}°)"
     }
@@ -34,7 +35,7 @@ private fun Double.roundTo1(): String =
 
 data class RotorLiveState(
     val connected: Boolean = false,
-    val statusText: String = "Getrennt",
+    val statusText: String = "",
     val lastLog: String = "",
     /** Rohposition von GETPOSDG (Logik/Zielvergleich). */
     val azDeg: Double? = null,
@@ -256,7 +257,12 @@ object AntennaMath {
 }
 
 class RotorRepository(context: android.content.Context) {
-    private val link = TcpLink(context.applicationContext)
+    private val appCtx = context.applicationContext
+    private fun str(id: Int): String = de.dk8de.rotorapp.AppLanguage.localizedContext(appCtx).getString(id)
+    private fun str(id: Int, vararg args: Any): String =
+        de.dk8de.rotorapp.AppLanguage.localizedContext(appCtx).getString(id, *args)
+
+    private val link = TcpLink(appCtx)
     private val client = RotorClient(link).also { c ->
         c.onBusTelegram = { tel -> onBusTelegram(tel) }
     }
@@ -560,7 +566,7 @@ class RotorRepository(context: android.content.Context) {
             runCatching { client.disconnect() }
             _state.value = _state.value.copy(
                 connected = false,
-                statusText = if (quietFail) "" else "Verbindung fehlgeschlagen",
+                statusText = if (quietFail) "" else str(R.string.status_connection_failed),
                 lastLog = e.message ?: e.toString(),
                 azOnline = false,
                 elOnline = false,
@@ -852,6 +858,7 @@ class RotorRepository(context: android.content.Context) {
             cmd == "SETPWM" || cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM") ->
                 applyPwmFromBus(tel)
             cmd == "STOP" -> applyStopFromBus(tel)
+            cmd == "SETREF" || cmd.startsWith("ACK_SETREF") -> applySetRefFromBus(tel)
             cmd == "ERR" || cmd.startsWith("ACK_GETERR") || cmd.startsWith("ACK_ERR") ->
                 applyErrFromBus(tel)
             cmd == "WARN" || cmd.startsWith("ACK_GETWARN") -> applyWarnFromBus(tel)
@@ -1113,6 +1120,65 @@ class RotorRepository(context: android.content.Context) {
     }
 
     /**
+     * Anderer Controller: SETREF:1 / ACK_SETREF → Homing-UI wie bei eigenem HOME
+     * (sonst zeigt GETREF=0 nur „nicht referenziert“).
+     */
+    private fun applySetRefFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+        val cmd = tel.cmd.trim().uppercase()
+        val isAck = cmd.startsWith("ACK_SETREF")
+        val saz = profile.slaveAz
+        val sel = profile.slaveEl
+
+        val axis = when {
+            !isAck && tel.dst == saz -> RotorAxis.AZ
+            !isAck && profile.enableEl && tel.dst == sel -> RotorAxis.EL
+            isAck && tel.src == saz -> RotorAxis.AZ
+            isAck && profile.enableEl && tel.src == sel -> RotorAxis.EL
+            else -> return
+        }
+
+        // Eigenes SETREF / eigenes ACK — State schon in startHoming gesetzt
+        if (!isAck && tel.src == profile.masterId) return
+        if (isAck && tel.dst == profile.masterId) return
+
+        val value = de.dk8de.rotorapp.protocol.Rs485Protocol.parseDegree(tel.params)?.toInt()
+        // Nur SETREF:1 / ACK mit 1 = Homing; :0 = Fehlerquittung
+        if (value != 1) return
+
+        val prev = _state.value
+        val already = when (axis) {
+            RotorAxis.AZ -> prev.azHoming
+            RotorAxis.EL -> prev.elHoming
+        }
+        if (already) return
+
+        _state.value = when (axis) {
+            RotorAxis.AZ -> takeBusControl(prev).copy(
+                azHoming = true,
+                azOnline = true,
+                azReferenced = false,
+                azErrorCode = 0,
+                moving = false,
+                azTarget = null,
+                azCompassTarget = null,
+                statusText = str(R.string.status_homing_az),
+                lastLog = if (isAck) "Bus ACK_SETREF AZ" else "Bus SETREF:1 AZ",
+            )
+            RotorAxis.EL -> takeBusControl(prev).copy(
+                elHoming = true,
+                elOnline = true,
+                elReferenced = false,
+                elErrorCode = 0,
+                moving = false,
+                elTarget = null,
+                elCompassTarget = null,
+                statusText = str(R.string.status_homing_el),
+                lastLog = if (isAck) "Bus ACK_SETREF EL" else "Bus SETREF:1 EL",
+            )
+        }
+    }
+
+    /**
      * Broadcast `#SRC:255:ERR:code:CS$` oder ACK_GETERR — Motor gestoppt, Fehler gelatched.
      */
     private fun applyErrFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
@@ -1136,7 +1202,7 @@ class RotorRepository(context: android.content.Context) {
         val msg = if (code == 0) {
             ""
         } else {
-            RotorCodes.formatError(label, code)
+            RotorCodes.formatError(appCtx, label, code)
         }
         _state.value = when (axis) {
             RotorAxis.AZ -> prev.copy(
@@ -1183,24 +1249,24 @@ class RotorRepository(context: android.content.Context) {
         }
         _state.value = next.copy(
             statusText = faultStatusText(next),
-            lastLog = RotorCodes.formatWarnings(label, ids).ifBlank { "GETWARN $label: 0" },
+            lastLog = RotorCodes.formatWarnings(appCtx, label, ids).ifBlank { "GETWARN $label: 0" },
         )
     }
 
     /** Statuszeile: Fehler vor Warnung vor Homing/Referenz. */
     private fun faultStatusText(s: RotorLiveState): String {
         val errs = buildList {
-            if (s.azErrorCode != 0) add(RotorCodes.formatError("AZ", s.azErrorCode))
+            if (s.azErrorCode != 0) add(RotorCodes.formatError(appCtx, "AZ", s.azErrorCode))
             if (profile.enableEl && s.elErrorCode != 0) {
-                add(RotorCodes.formatError("EL", s.elErrorCode))
+                add(RotorCodes.formatError(appCtx, "EL", s.elErrorCode))
             }
         }
         if (errs.isNotEmpty()) return errs.joinToString(" · ")
         val warns = buildList {
-            val azW = RotorCodes.formatWarnings("AZ", s.azWarnIds)
+            val azW = RotorCodes.formatWarnings(appCtx, "AZ", s.azWarnIds)
             if (azW.isNotEmpty()) add(azW)
             if (profile.enableEl) {
-                val elW = RotorCodes.formatWarnings("EL", s.elWarnIds)
+                val elW = RotorCodes.formatWarnings(appCtx, "EL", s.elWarnIds)
                 if (elW.isNotEmpty()) add(elW)
             }
         }
@@ -1564,7 +1630,7 @@ class RotorRepository(context: android.content.Context) {
         if (!ok) {
             _state.value = takeBusControl(_state.value).copy(
                 lastLog = "SETREF fehlgeschlagen",
-                statusText = "Homing fehlgeschlagen",
+                statusText = str(R.string.status_homing_failed),
             )
             return@withLock false
         }
@@ -1577,7 +1643,7 @@ class RotorRepository(context: android.content.Context) {
                 moving = false,
                 azTarget = null,
                 azCompassTarget = null,
-                statusText = "Homing AZ…",
+                statusText = str(R.string.status_homing_az),
                 lastLog = "SETREF:1 AZ",
             )
             RotorAxis.EL -> takeBusControl(_state.value).copy(
@@ -1588,7 +1654,7 @@ class RotorRepository(context: android.content.Context) {
                 moving = false,
                 elTarget = null,
                 elCompassTarget = null,
-                statusText = "Homing EL…",
+                statusText = str(R.string.status_homing_el),
                 lastLog = "SETREF:1 EL",
             )
         }
@@ -1601,8 +1667,8 @@ class RotorRepository(context: android.content.Context) {
         val s = takeBusControl(_state.value)
         if (!s.azReferenced || s.azHoming) {
             _state.value = s.copy(
-                lastLog = "AZ nicht referenziert – HOME nötig",
-                statusText = "AZ nicht referenziert – HOME nötig",
+                lastLog = str(R.string.status_az_unref),
+                statusText = str(R.string.status_az_unref),
             )
             return@withLock false
         }
@@ -1671,8 +1737,8 @@ class RotorRepository(context: android.content.Context) {
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
-                lastLog = "SETPOSDG AZ fehlgeschlagen",
-                statusText = "SETPOSDG AZ fehlgeschlagen",
+                lastLog = str(R.string.status_move_az_failed),
+                statusText = str(R.string.status_move_az_failed),
             )
         }
         ok
@@ -1688,16 +1754,16 @@ class RotorRepository(context: android.content.Context) {
         val s = takeBusControl(_state.value)
         if (!s.azReferenced || s.azHoming) {
             _state.value = s.copy(
-                lastLog = "AZ nicht referenziert – HOME nötig",
-                statusText = "AZ nicht referenziert – HOME nötig",
+                lastLog = str(R.string.status_az_unref),
+                statusText = str(R.string.status_az_unref),
             )
             return@withLock false
         }
         val wantEl = profile.enableEl
         if (wantEl && (!s.elReferenced || s.elHoming)) {
             _state.value = s.copy(
-                lastLog = "EL nicht referenziert – HOME nötig",
-                statusText = "EL nicht referenziert – HOME nötig",
+                lastLog = str(R.string.status_el_unref),
+                statusText = str(R.string.status_el_unref),
             )
             return@withLock false
         }
@@ -1707,8 +1773,8 @@ class RotorRepository(context: android.content.Context) {
         }.getOrNull()
         if (homeAz == null) {
             _state.value = s.copy(
-                lastLog = "GETHOMEPOS AZ fehlgeschlagen",
-                statusText = "GETHOMEPOS AZ fehlgeschlagen",
+                lastLog = str(R.string.status_gethome_az_failed),
+                statusText = str(R.string.status_gethome_az_failed),
             )
             return@withLock false
         }
@@ -1721,8 +1787,8 @@ class RotorRepository(context: android.content.Context) {
         }
         if (wantEl && homeEl == null) {
             _state.value = s.copy(
-                lastLog = "GETHOMEPOS EL fehlgeschlagen",
-                statusText = "GETHOMEPOS EL fehlgeschlagen",
+                lastLog = str(R.string.status_gethome_el_failed),
+                statusText = str(R.string.status_gethome_el_failed),
             )
             return@withLock false
         }
@@ -1767,8 +1833,8 @@ class RotorRepository(context: android.content.Context) {
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
-                lastLog = "Parken AZ fehlgeschlagen",
-                statusText = "Parken AZ fehlgeschlagen",
+                lastLog = str(R.string.status_park_az_failed),
+                statusText = str(R.string.status_park_az_failed),
             )
             return@withLock false
         }
@@ -1797,8 +1863,8 @@ class RotorRepository(context: android.content.Context) {
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
-                lastLog = "Parken EL fehlgeschlagen",
-                statusText = "Parken EL fehlgeschlagen",
+                lastLog = str(R.string.status_park_el_failed),
+                statusText = str(R.string.status_park_el_failed),
             )
         }
         okAz && okEl
@@ -1811,8 +1877,8 @@ class RotorRepository(context: android.content.Context) {
         val s = takeBusControl(_state.value)
         if (!s.elReferenced || s.elHoming) {
             _state.value = s.copy(
-                lastLog = "EL nicht referenziert – HOME nötig",
-                statusText = "EL nicht referenziert – HOME nötig",
+                lastLog = str(R.string.status_el_unref),
+                statusText = str(R.string.status_el_unref),
             )
             return@withLock false
         }
@@ -1848,8 +1914,8 @@ class RotorRepository(context: android.content.Context) {
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
-                lastLog = "SETPOSDG EL fehlgeschlagen",
-                statusText = "SETPOSDG EL fehlgeschlagen",
+                lastLog = str(R.string.status_move_el_failed),
+                statusText = str(R.string.status_move_el_failed),
             )
         }
         ok
@@ -1864,13 +1930,13 @@ class RotorRepository(context: android.content.Context) {
         val prev = takeBusControl(_state.value)
         _state.value = when (axis) {
             RotorAxis.AZ -> prev.copy(
-                lastLog = if (ok) "STOP AZ OK" else "STOP AZ fehlgeschlagen",
-                statusText = if (ok) faultStatusText(prev) else "STOP AZ fehlgeschlagen",
+                lastLog = if (ok) "STOP AZ OK" else str(R.string.status_stop_az_failed),
+                statusText = if (ok) faultStatusText(prev) else str(R.string.status_stop_az_failed),
                 moving = profile.enableEl && prev.elTarget != null && prev.moving,
             )
             RotorAxis.EL -> prev.copy(
-                lastLog = if (ok) "STOP EL OK" else "STOP EL fehlgeschlagen",
-                statusText = if (ok) faultStatusText(prev) else "STOP EL fehlgeschlagen",
+                lastLog = if (ok) "STOP EL OK" else str(R.string.status_stop_el_failed),
+                statusText = if (ok) faultStatusText(prev) else str(R.string.status_stop_el_failed),
                 moving = prev.azTarget != null && prev.moving,
             )
         }
@@ -1890,8 +1956,8 @@ class RotorRepository(context: android.content.Context) {
             }
         } else {
         _state.value = _state.value.copy(
-                lastLog = "SETPWM fehlgeschlagen",
-                statusText = "SETPWM fehlgeschlagen",
+                lastLog = str(R.string.status_setpwm_failed),
+                statusText = str(R.string.status_setpwm_failed),
             )
         }
         ok
@@ -1971,7 +2037,7 @@ class RotorRepository(context: android.content.Context) {
         _state.value = _state.value.copy(
             antennas = list.take(3),
             lastLog = if (ok) "Antenne $n gespeichert" else "Antenne $n Speichern teilweise fehlgeschlagen",
-            statusText = if (ok) faultStatusText(_state.value) else "Antenne speichern fehlgeschlagen",
+            statusText = if (ok) faultStatusText(_state.value) else str(R.string.status_antenna_save_failed),
         )
         ok
     }
@@ -2345,15 +2411,19 @@ class RotorRepository(context: android.content.Context) {
         val azOk = azRef == 1
         val elOk = if (!profile.enableEl) true else elRef == 1
         val cur = _state.value
+        // Homing aktiv halten, bis GETREF=1; zusätzlich 1→0 als fremdes Homing erkennen
         val azHoming = when {
-            !cur.azHoming -> false
             azRef == 1 -> false
-            else -> true
+            cur.azHoming -> true
+            azRef == 0 && azOnlineOut && before.azReferenced -> true
+            else -> false
         }
         val elHoming = when {
-            !cur.elHoming -> false
+            !profile.enableEl -> false
             elRef == 1 -> false
-            else -> true
+            cur.elHoming -> true
+            elRef == 0 && elOnlineOut && before.elReferenced -> true
+            else -> false
         }
         if (azRef != null || elRef != null) lastOkPollMs = System.currentTimeMillis()
 
@@ -2420,16 +2490,16 @@ class RotorRepository(context: android.content.Context) {
     ): String {
         val fault = faultStatusText(s)
         if (fault.isNotBlank() && s.hasFault) return fault
-        if (s.azHoming && s.elHoming) return "Homing AZ/EL…"
-        if (s.azHoming) return "Homing AZ…"
-        if (s.elHoming) return "Homing EL…"
+        if (s.azHoming && s.elHoming) return str(R.string.status_homing_az_el)
+        if (s.azHoming) return str(R.string.status_homing_az)
+        if (s.elHoming) return str(R.string.status_homing_el)
         if (fault.isNotBlank()) return fault // Warnungen nach Homing-Hinweis
         val azNeed = azOnline && !azOk
         val elNeed = profile.enableEl && elOnline && !elOk
         return when {
-            azNeed && elNeed -> "AZ/EL nicht referenziert – HOME nötig"
-            azNeed -> "AZ nicht referenziert – HOME nötig"
-            elNeed -> "EL nicht referenziert – HOME nötig"
+            azNeed && elNeed -> str(R.string.status_az_el_unref)
+            azNeed -> str(R.string.status_az_unref)
+            elNeed -> str(R.string.status_el_unref)
             else -> ""
         }
     }
@@ -2443,7 +2513,7 @@ class RotorRepository(context: android.content.Context) {
     }
 
     private fun ensureConnected() {
-        check(client.isConnected) { "Nicht verbunden" }
+        check(client.isConnected) { str(R.string.status_not_connected) }
     }
 
     /** GETROTORTYPE an AZ/EL — Anzeige zuerst aus Cache, Bus bestätigt/aktualisiert. */

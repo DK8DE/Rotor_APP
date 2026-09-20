@@ -444,6 +444,7 @@ class RotorClient(
             u == "SETPWM" ||
             u == "STOP" ||
             u == "SETREF" ||
+            u.startsWith("ACK_SETREF") ||
             u == "ERR" ||
             u == "WARN" ||
             u.startsWith("ACK_GETPOSDG") ||

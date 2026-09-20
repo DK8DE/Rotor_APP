@@ -1,4 +1,193 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Rotor App</string>
+
+    <!-- Common -->
+    <string name="action_go">GO</string>
+    <string name="action_stop">STOP</string>
+    <string name="action_save">SAVE</string>
+    <string name="action_del">DEL</string>
+    <string name="action_save_label">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_yes">Yes</string>
+    <string name="action_no">No</string>
+    <string name="value_na">N/A</string>
+    <string name="cd_settings">Settings</string>
+    <string name="cd_back">Back</string>
+    <string name="cd_add">New</string>
+    <string name="cd_edit">Edit</string>
+    <string name="cd_delete">Delete</string>
+    <string name="cd_expand">Expand</string>
+    <string name="cd_collapse">Collapse</string>
+
+    <!-- Navigation -->
+    <string name="nav_quick">Quick</string>
+    <string name="nav_az_el">AZ/EL</string>
+    <string name="nav_az">AZ</string>
+    <string name="nav_el">EL</string>
+    <string name="nav_map">Map</string>
+
+    <!-- Favorites -->
+    <string name="favorites_title">Favorites</string>
+    <string name="favorites_empty">No favorites</string>
+    <string name="favorites_select">Select favorite</string>
+    <string name="dialog_delete_favorite_title">Delete favorite?</string>
+    <string name="dialog_delete_favorite_message">Really delete “%1$s”?</string>
+    <string name="dialog_save_favorite_title">Save favorite</string>
+    <string name="field_name">Name</string>
+    <string name="favorite_label_az">%1$s · AZ %2$.1f°</string>
+    <string name="favorite_label_az_el">%1$s · AZ %2$.1f° / EL %3$.1f°</string>
+
+    <!-- Quick -->
+    <string name="pwm_title_az">AZ speed (PWM)</string>
+    <string name="pwm_title_el">EL speed (PWM)</string>
+    <string name="stats_reset_heading">Reset statistics</string>
+    <string name="btn_reset_dwell">DWELL TIME</string>
+    <string name="btn_park">PARK</string>
+    <string name="btn_home_az">HOME AZ</string>
+    <string name="btn_home_el">HOME EL</string>
+    <string name="antenna_section">Antenna</string>
+    <string name="antenna_connect_hint">Connect to select an antenna</string>
+    <string name="antenna_active">active</string>
+    <string name="antenna_fallback">Antenna %1$d</string>
+
+    <!-- Compass / HUD -->
+    <string name="hud_outdoor">Outdoor</string>
+    <string name="hud_motor">Motor</string>
+    <string name="hud_motor_az">Motor AZ</string>
+    <string name="hud_motor_el">Motor EL</string>
+    <string name="hud_wind">Wind</string>
+    <string name="label_angle_deg">Angle °</string>
+    <string name="label_elevation_deg">Elevation °</string>
+    <string name="status_az_ist">AZ actual: </string>
+    <string name="status_el_ist">EL actual: </string>
+    <string name="status_soll">  Target: </string>
+    <string name="status_suffix_homing">  · Homing</string>
+    <string name="status_suffix_moving">  · moving</string>
+    <string name="compact_ist">Actual: </string>
+    <string name="compact_soll">  Target: </string>
+    <string name="compass_n">N</string>
+    <string name="compass_s">S</string>
+    <string name="compass_e">E</string>
+    <string name="compass_w">W</string>
+
+    <!-- Map -->
+    <string name="map_bar_hint">Map · tap sets azimuth</string>
+    <string name="map_locator_on">Locator on</string>
+    <string name="map_locator_off">Locator off</string>
+    <string name="map_load_error">Map could not be loaded.</string>
+    <string name="map_click_status">Target %1$.1f° · %2$.1f km</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="section_profiles">Profiles</string>
+    <string name="profile_active">active · %1$s</string>
+    <string name="profile_new_name">New</string>
+    <string name="profile_edit_title">Edit profile</string>
+    <string name="profile_summary_az_el">AZ+EL</string>
+    <string name="profile_summary_az_only">AZ only</string>
+    <string name="profile_summary_wind"> · Wind</string>
+    <string name="section_language">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_de">German</string>
+    <string name="language_en">English</string>
+    <string name="section_antennas">Antennas (AZ rotor)</string>
+    <string name="antennas_connect_hint">Connect to read and save antenna values from the rotor.</string>
+    <string name="antenna_slot">Antenna %1$d</string>
+    <string name="antenna_unnamed">unnamed</string>
+    <string name="antenna_dipole_suffix"> · Dipole</string>
+    <string name="antenna_active_suffix"> · active</string>
+    <string name="field_antenna_name">Name (max. 9)</string>
+    <string name="field_offset_deg">Offset angle °</string>
+    <string name="field_opening_deg">Beamwidth °</string>
+    <string name="field_range_km">Range km</string>
+    <string name="label_dipole">Dipole</string>
+    <string name="section_compass_display">Compass display</string>
+    <string name="compass_rings_hint">Show or hide current and dwell rings on the compass</string>
+    <string name="toggle_strom_ring">Current consumption ring</string>
+    <string name="toggle_strom_ring_sub">36 bins on compass, blue→red by load</string>
+    <string name="toggle_dwell_ring">Dwell ring</string>
+    <string name="toggle_dwell_ring_sub">Color by idle time per sector</string>
+    <string name="section_beam_overlay">Beamwidth overlay</string>
+    <string name="beam_overlay_hint">Soft color overlay of antenna beamwidth on the AZ compass</string>
+    <string name="toggle_beam_overlay">Show beamwidth</string>
+    <string name="toggle_beam_overlay_sub">Overlay for the selected antenna</string>
+    <string name="heatmap_az_heading">Azimuth heatmap</string>
+    <string name="heatmap_az_description">Without custom scale: auto with minimum span. With scale: normal range green, below blue, above red.</string>
+    <string name="toggle_heatmap_custom">Use custom color scale</string>
+    <string name="toggle_heatmap_custom_sub">blue ≤ norm min ≤ norm max ≤ red</string>
+    <string name="field_thr_blue">Lower threshold (blue)</string>
+    <string name="field_norm_min">Normal range min (green)</string>
+    <string name="field_norm_max">Normal range max (green)</string>
+    <string name="field_thr_red">Upper threshold (red)</string>
+    <string name="btn_save_scale">SAVE SCALE</string>
+    <string name="btn_fill_from_bins">FROM CURRENT BINS</string>
+    <string name="field_dwell_red_minutes">Dwell until red (minutes)</string>
+    <string name="btn_save_dwell_time">SAVE TIME</string>
+    <string name="field_dwell_sectors">Direction divisions (sectors)</string>
+    <string name="dwell_sectors_hint">10–100 sectors</string>
+    <string name="btn_save_sectors">SAVE SECTORS</string>
+    <string name="section_location">Location (map)</string>
+    <string name="location_qth_hint">QTH for beam and map tap bearing</string>
+    <string name="field_latitude">Latitude (°)</string>
+    <string name="field_longitude">Longitude (°)</string>
+    <string name="field_maidenhead">Maidenhead locator (optional)</string>
+    <string name="btn_save_location">SAVE LOCATION</string>
+    <string name="field_profile_name">Name</string>
+    <string name="field_host">IP / Host</string>
+    <string name="field_port">Port</string>
+    <string name="field_master_id">Master ID</string>
+    <string name="field_slave_az">Slave AZ</string>
+    <string name="field_controller_id">Panel controller ID</string>
+    <string name="checkbox_elevation">Elevation available</string>
+    <string name="field_slave_el">Slave EL</string>
+    <string name="checkbox_wind">Wind enabled (anemometer)</string>
+    <string name="wind_enabled_hint">SETWINDENABLE on AZ · poll only when enabled</string>
+    <string name="wind_arrow_heading">Wind arrow shows</string>
+    <string name="wind_mode_from_title">Where the wind comes from</string>
+    <string name="wind_mode_from_sub">Arrow points to origin</string>
+    <string name="wind_mode_to_title">Where the wind blows</string>
+    <string name="wind_mode_to_sub">Arrow points downwind</string>
+    <string name="btn_save_profile">SAVE</string>
+
+    <!-- Status / errors -->
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connection_failed">Connection failed</string>
+    <string name="status_homing_failed">Homing failed</string>
+    <string name="status_homing_az">Homing AZ…</string>
+    <string name="status_homing_el">Homing EL…</string>
+    <string name="status_homing_az_el">Homing AZ/EL…</string>
+    <string name="status_az_unref">AZ not referenced – HOME required</string>
+    <string name="status_el_unref">EL not referenced – HOME required</string>
+    <string name="status_az_el_unref">AZ/EL not referenced – HOME required</string>
+    <string name="status_move_az_failed">AZ position move failed</string>
+    <string name="status_move_el_failed">EL position move failed</string>
+    <string name="status_gethome_az_failed">Failed to read AZ home position</string>
+    <string name="status_gethome_el_failed">Failed to read EL home position</string>
+    <string name="status_park_az_failed">AZ parking failed</string>
+    <string name="status_park_el_failed">EL parking failed</string>
+    <string name="status_stop_az_failed">AZ stop failed</string>
+    <string name="status_stop_el_failed">EL stop failed</string>
+    <string name="status_setpwm_failed">PWM set failed</string>
+    <string name="status_antenna_save_failed">Failed to save antenna</string>
+    <string name="status_not_connected">Not connected</string>
+    <string name="rotor_error_line">%1$s error %2$d %3$s: %4$s</string>
+    <string name="rotor_warning_line">%1$s warning: %2$s</string>
+    <string name="err_none">No error</string>
+    <string name="err_timeout">Deadman/keepalive timeout</string>
+    <string name="err_endstop">Limit switch blocking travel direction</string>
+    <string name="err_nstop">NSTOP (emergency stop) via RS485</string>
+    <string name="err_hard_limit">Current hard limit</string>
+    <string name="err_stall">Stall: encoder not moving</string>
+    <string name="err_home_fail">Homing failed</string>
+    <string name="err_pos_timeout">Position move: target not reached in time</string>
+    <string name="err_unknown">Unknown error (%1$d)</string>
+    <string name="warn_none">No warning</string>
+    <string name="warn_soft_limit">Current warning (soft limit)</string>
+    <string name="warn_wind_gust">Wind gust / briefly increased load</string>
+    <string name="warn_drag_increase">Uniformly more friction</string>
+    <string name="warn_drag_decrease">Uniformly less friction</string>
+    <string name="warn_temp_ambient">Ambient temperature too high</string>
+    <string name="warn_temp_motor">Motor too hot</string>
+    <string name="warn_unknown">Unknown warning (%1$d)</string>
 </resources>

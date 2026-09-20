@@ -71,6 +71,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
+import de.dk8de.rotorapp.R
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -157,10 +159,15 @@ fun ControlScreen(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     // Querformat + EL: Quick | AZ+EL nebeneinander | Karte
     val dualAxes = landscape && elevationEnabled
+    val navQuick = stringResource(R.string.nav_quick)
+    val navAzEl = stringResource(R.string.nav_az_el)
+    val navAz = stringResource(R.string.nav_az)
+    val navEl = stringResource(R.string.nav_el)
+    val navMap = stringResource(R.string.nav_map)
     val pageLabels = when {
-        dualAxes -> listOf("Quick", "AZ/EL", "Karte")
-        elevationEnabled -> listOf("Quick", "AZ", "EL", "Karte")
-        else -> listOf("Quick", "AZ", "Karte")
+        dualAxes -> listOf(navQuick, navAzEl, navMap)
+        elevationEnabled -> listOf(navQuick, navAz, navEl, navMap)
+        else -> listOf(navQuick, navAz, navMap)
     }
     val pageCount = pageLabels.size
     val mapPageIndex = pageLabels.lastIndex
@@ -213,7 +220,7 @@ fun ControlScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Rotor App",
+                        text = stringResource(R.string.app_name),
                         color = BridgeText,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
@@ -357,7 +364,7 @@ fun ControlScreen(
                     ) {
                         Icon(
                             Icons.Default.Settings,
-                            contentDescription = "Einstellungen",
+                            contentDescription = stringResource(R.string.cd_settings),
                             tint = BridgeText,
                             modifier = Modifier.size(22.dp),
                         )
@@ -476,10 +483,10 @@ private fun QuickSettingsPage(
     if (confirmDelete && selectedFav != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Favorit löschen?", color = BridgeText) },
+            title = { Text(stringResource(R.string.dialog_delete_favorite_title), color = BridgeText) },
             text = {
                 Text(
-                    "„${selectedFav.name}“ wirklich löschen?",
+                    stringResource(R.string.dialog_delete_favorite_message, selectedFav.name),
                     color = BridgeMuted,
                 )
             },
@@ -491,12 +498,12 @@ private fun QuickSettingsPage(
                         confirmDelete = false
                     },
                 ) {
-                    Text("Ja", color = BridgeStop)
+                    Text(stringResource(R.string.action_yes), color = BridgeStop)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }) {
-                    Text("Nein", color = BridgeMuted)
+                    Text(stringResource(R.string.action_no), color = BridgeMuted)
                 }
             },
             containerColor = BridgePanel,
@@ -526,7 +533,7 @@ private fun QuickSettingsPage(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Favoriten", color = BridgeText, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.favorites_title), color = BridgeText, fontWeight = FontWeight.SemiBold)
                 ExposedDropdownMenuBox(
                     expanded = favExpanded,
                     onExpandedChange = { favExpanded = it && favorites.isNotEmpty() },
@@ -534,7 +541,11 @@ private fun QuickSettingsPage(
                 ) {
                     TextField(
                         value = selectedFav?.let { formatFavoriteLabel(it, elevationEnabled) }
-                            ?: if (favorites.isEmpty()) "Keine Favoriten" else "Favorit wählen",
+                            ?: if (favorites.isEmpty()) {
+                                stringResource(R.string.favorites_empty)
+                            } else {
+                                stringResource(R.string.favorites_select)
+                            },
                         onValueChange = {},
                         readOnly = true,
                         singleLine = true,
@@ -593,7 +604,7 @@ private fun QuickSettingsPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BridgeButton(
-                        text = "GO",
+                        text = stringResource(R.string.action_go),
                         onClick = { selectedFavId?.let(onGoFavorite) },
                         enabled = connected && selectedFavId != null &&
                             state.rotor.azReferenced && !state.rotor.azHoming,
@@ -603,7 +614,7 @@ private fun QuickSettingsPage(
                             .fillMaxHeight(),
                     )
                     BridgeButton(
-                        text = "DEL",
+                        text = stringResource(R.string.action_del),
                         onClick = { confirmDelete = true },
                         enabled = selectedFavId != null,
                         tone = BridgeButtonTone.Stop,
@@ -617,7 +628,7 @@ private fun QuickSettingsPage(
         }
 
         PwmSliderCard(
-            title = "Geschwindigkeit AZ (PWM)",
+            title = stringResource(R.string.pwm_title_az),
             value = azSlider,
             enabled = connected,
             onValueChange = { raw ->
@@ -632,7 +643,7 @@ private fun QuickSettingsPage(
         )
         if (elevationEnabled) {
             PwmSliderCard(
-                title = "Geschwindigkeit EL (PWM)",
+                title = stringResource(R.string.pwm_title_el),
                 value = elSlider,
                 enabled = connected,
                 onValueChange = { raw ->
@@ -656,9 +667,9 @@ private fun QuickSettingsPage(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Statistik zurücksetzen", color = BridgeText, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.stats_reset_heading), color = BridgeText, fontWeight = FontWeight.SemiBold)
                 BridgeButton(
-                    text = "STANDZEIT",
+                    text = stringResource(R.string.btn_reset_dwell),
                     onClick = onResetDwell,
                     enabled = connected,
                     compact = true,
@@ -670,7 +681,7 @@ private fun QuickSettingsPage(
         }
 
         BridgeButton(
-            text = "PARKEN",
+            text = stringResource(R.string.btn_park),
             onClick = onParkAzimuth,
             enabled = connected &&
                 state.rotor.azReferenced && !state.rotor.azHoming &&
@@ -689,7 +700,7 @@ private fun QuickSettingsPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BridgeButton(
-                text = "HOME AZ",
+                text = stringResource(R.string.btn_home_az),
                 onClick = onHomeAz,
                 enabled = connected && !state.rotor.azHoming,
                 compact = true,
@@ -699,7 +710,7 @@ private fun QuickSettingsPage(
             )
             if (elevationEnabled) {
                 BridgeButton(
-                    text = "HOME EL",
+                    text = stringResource(R.string.btn_home_el),
                     onClick = onHomeEl,
                     enabled = connected && !state.rotor.elHoming,
                     compact = true,
@@ -716,7 +727,7 @@ private fun QuickSettingsPage(
 private fun azimuthHudTopLeft(state: AppUiState): Pair<String, String> {
     val connected = state.rotor.connected
     val v = if (!connected) "—" else state.rotor.tempAmbientC?.let { "%.1f°C".format(it) } ?: "—"
-    return "Außen" to v
+    return stringResource(R.string.hud_outdoor) to v
 }
 
 @Composable
@@ -724,7 +735,11 @@ private fun azimuthHudTopRight(state: AppUiState): List<Pair<String, String>> {
     val connected = state.rotor.connected
     fun t(v: Double?): String =
         if (!connected) "—" else v?.let { "%.1f°C".format(it) } ?: "—"
-    val label = if (state.activeProfile?.enableEl == true) "Motor AZ" else "Motor"
+    val label = if (state.activeProfile?.enableEl == true) {
+        stringResource(R.string.hud_motor_az)
+    } else {
+        stringResource(R.string.hud_motor)
+    }
     return listOf(label to t(state.rotor.tempMotorAzC))
 }
 
@@ -732,7 +747,7 @@ private fun azimuthHudTopRight(state: AppUiState): List<Pair<String, String>> {
 private fun elevationHudTopRight(state: AppUiState): Pair<String, String> {
     val connected = state.rotor.connected
     val v = if (!connected) "—" else state.rotor.tempMotorElC?.let { "%.1f°C".format(it) } ?: "—"
-    return "Motor EL" to v
+    return stringResource(R.string.hud_motor_el) to v
 }
 
 @Composable
@@ -744,7 +759,7 @@ private fun azimuthHudBottomLeft(state: AppUiState): Pair<String, String>? {
         state.rotor.windHwEnabled != true && state.rotor.windKmh == null -> "—"
         else -> state.rotor.windKmh?.let { "%.1f km/h".format(it) } ?: "— km/h"
     }
-    return "Wind" to windVal
+    return stringResource(R.string.hud_wind) to windVal
 }
 
 @Composable
@@ -764,13 +779,13 @@ private fun AntennaSelectCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                "Antenne",
+                stringResource(R.string.antenna_section),
                 color = BridgeText,
                 fontWeight = FontWeight.SemiBold,
             )
             if (!connected) {
                 Text(
-                    "Verbinden, um Antenne zu wählen",
+                    stringResource(R.string.antenna_connect_hint),
                     color = BridgeMuted,
                     fontSize = 13.sp,
                 )
@@ -778,7 +793,8 @@ private fun AntennaSelectCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 (1..3).forEach { slot ->
                     val ant = antennas.getOrNull(slot - 1)
-                    val label = ant?.label(slot) ?: "Antenne $slot (0°)"
+                    val fallback = stringResource(R.string.antenna_fallback, slot)
+                    val label = ant?.label(slot, fallback) ?: "$fallback (0°)"
                     val isSel = selected == slot
                     Row(
                         modifier = Modifier
@@ -808,7 +824,7 @@ private fun AntennaSelectCard(
                             modifier = Modifier.weight(1f),
                         )
                         if (isSel) {
-                            Text("aktiv", color = BridgeAccent, fontSize = 12.sp)
+                            Text(stringResource(R.string.antenna_active), color = BridgeAccent, fontSize = 12.sp)
                         }
                     }
                 }
@@ -874,7 +890,7 @@ private fun DualAxesLandscapePage(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         LandscapeAxisColumn(
-            title = "AZ",
+            title = stringResource(R.string.nav_az),
             state = state,
             azimuth = true,
             canMove = canMoveAz,
@@ -888,7 +904,7 @@ private fun DualAxesLandscapePage(
                 .fillMaxHeight(),
         )
         LandscapeAxisColumn(
-            title = "EL",
+            title = stringResource(R.string.nav_el),
             state = state,
             azimuth = false,
             canMove = canMoveEl,
@@ -934,6 +950,11 @@ private fun LandscapeAxisColumn(
     }
     val elMax = state.rotor.elMaxDeg
     val endstop = state.rotor.selectedOffsetDeg.toFloat()
+    val na = stringResource(R.string.value_na)
+    val compactIst = stringResource(R.string.compact_ist)
+    val compactSoll = stringResource(R.string.compact_soll)
+    val labelAngle = stringResource(R.string.label_angle_deg)
+    val labelElevation = stringResource(R.string.label_elevation_deg)
 
     fun submit() {
         val deg = angleDraft.trim().replace(',', '.').toDoubleOrNull() ?: return
@@ -960,13 +981,13 @@ private fun LandscapeAxisColumn(
             Text(title, color = BridgeAccent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Text(
                 text = buildAnnotatedString {
-                    append("Ist ")
+                    append(compactIst)
                     withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
-                        append(if (offline) "NA" else ist?.let { "%.1f°".format(it) } ?: "NA")
+                        append(if (offline) na else ist?.let { "%.1f°".format(it) } ?: na)
                     }
-                    append("  Soll ")
+                    append(compactSoll)
                     withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
-                        append(if (offline) "NA" else soll?.let { "%.1f°".format(it) } ?: "NA")
+                        append(if (offline) na else soll?.let { "%.1f°".format(it) } ?: na)
                     }
                 },
                 color = BridgeText,
@@ -1038,7 +1059,7 @@ private fun LandscapeAxisColumn(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BridgeButton(
-                text = "STOP",
+                text = stringResource(R.string.action_stop),
                 onClick = onStop,
                 enabled = connected,
                 tone = BridgeButtonTone.Stop,
@@ -1074,7 +1095,7 @@ private fun LandscapeAxisColumn(
                     ) {
                         if (angleDraft.isEmpty()) {
                             Text(
-                                if (azimuth) "Winkel °" else "Elevation °",
+                                if (azimuth) labelAngle else labelElevation,
                                 color = BridgeMuted,
                                 fontSize = 13.sp,
                             )
@@ -1084,14 +1105,14 @@ private fun LandscapeAxisColumn(
                 },
             )
             BridgeButton(
-                text = "GO",
+                text = stringResource(R.string.action_go),
                 onClick = { submit() },
                 enabled = canMove && angleDraft.isNotBlank(),
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
             BridgeButton(
-                text = "SAVE",
+                text = stringResource(R.string.action_save),
                 onClick = { showSaveDialog = true },
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
@@ -1135,6 +1156,7 @@ private fun AzimuthPage(
     val sollDisplay = state.rotor.azSollDisplay()
     val endstop = state.rotor.selectedOffsetDeg.toFloat()
     val ant = state.rotor.antennas.getOrNull(state.rotor.selectedAntenna - 1)
+    val labelAngle = stringResource(R.string.label_angle_deg)
 
     Column(
         modifier = modifier
@@ -1187,7 +1209,7 @@ private fun AzimuthPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BridgeButton(
-                text = "STOP",
+                text = stringResource(R.string.action_stop),
                 onClick = onStop,
                 enabled = connected,
                 tone = BridgeButtonTone.Stop,
@@ -1198,20 +1220,21 @@ private fun AzimuthPage(
                 value = angleDraft,
                 onValueChange = { angleDraft = it },
                 enabled = canMove,
+                label = labelAngle,
                 onGo = { goAngle() },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
             )
             BridgeButton(
-                text = "GO",
+                text = stringResource(R.string.action_go),
                 onClick = { goAngle() },
                 enabled = canMove && angleDraft.isNotBlank(),
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
             BridgeButton(
-                text = "SAVE",
+                text = stringResource(R.string.action_save),
                 onClick = { showSaveDialog = true },
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
@@ -1248,6 +1271,8 @@ private fun ElevationPage(
         onElevation(deg.coerceIn(0.0, state.rotor.elMaxDeg))
         focusManager.clearFocus()
     }
+
+    val labelElevation = stringResource(R.string.label_elevation_deg)
 
     Column(
         modifier = modifier
@@ -1287,7 +1312,7 @@ private fun ElevationPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BridgeButton(
-                text = "STOP",
+                text = stringResource(R.string.action_stop),
                 onClick = onStop,
                 enabled = connected,
                 tone = BridgeButtonTone.Stop,
@@ -1298,21 +1323,21 @@ private fun ElevationPage(
                 value = angleDraft,
                 onValueChange = { angleDraft = it },
                 enabled = canMove,
-                label = "Elevation °",
+                label = labelElevation,
                 onGo = { goAngle() },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
             )
             BridgeButton(
-                text = "GO",
+                text = stringResource(R.string.action_go),
                 onClick = { goAngle() },
                 enabled = canMove && angleDraft.isNotBlank(),
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
             )
             BridgeButton(
-                text = "SAVE",
+                text = stringResource(R.string.action_save),
                 onClick = { showSaveDialog = true },
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
@@ -1338,13 +1363,13 @@ private fun SaveFavoriteNameDialog(
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Favorit speichern", color = BridgeText) },
+        title = { Text(stringResource(R.string.dialog_save_favorite_title), color = BridgeText) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
                 singleLine = true,
-                label = { Text("Name") },
+                label = { Text(stringResource(R.string.field_name)) },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = BridgeText,
                     unfocusedTextColor = BridgeText,
@@ -1361,23 +1386,24 @@ private fun SaveFavoriteNameDialog(
                 onClick = { onConfirm(name.trim()) },
                 enabled = name.isNotBlank(),
             ) {
-                Text("Speichern", color = BridgeAccent)
+                Text(stringResource(R.string.action_save_label), color = BridgeAccent)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Abbrechen", color = BridgeMuted)
+                Text(stringResource(R.string.action_cancel), color = BridgeMuted)
             }
         },
         containerColor = BridgePanel,
     )
 }
 
+@Composable
 private fun formatFavoriteLabel(fav: PositionFavorite, elevationEnabled: Boolean): String {
     return if (elevationEnabled) {
-        "%s · AZ %.1f° / EL %.1f°".format(fav.name, fav.azDeg, fav.elDeg)
+        stringResource(R.string.favorite_label_az_el, fav.name, fav.azDeg, fav.elDeg)
     } else {
-        "%s · AZ %.1f°".format(fav.name, fav.azDeg)
+        stringResource(R.string.favorite_label_az, fav.name, fav.azDeg)
     }
 }
 
@@ -1386,6 +1412,9 @@ private fun StatusCardAz(state: AppUiState) {
     val offline = !state.rotor.connected || !state.rotor.azOnline
     val ist = state.rotor.displayAz(state.rotor.azSmoothDeg ?: state.rotor.azDeg)
     val soll = state.rotor.azSollDisplay()
+    val na = stringResource(R.string.value_na)
+    val suffixHoming = stringResource(R.string.status_suffix_homing)
+    val suffixMoving = stringResource(R.string.status_suffix_moving)
     Card(
         colors = CardDefaults.cardColors(containerColor = BridgePanel),
         border = BorderStroke(1.dp, BridgeButtonBorder),
@@ -1393,28 +1422,28 @@ private fun StatusCardAz(state: AppUiState) {
     ) {
         Text(
             text = buildAnnotatedString {
-                append("AZ Ist: ")
+                append(stringResource(R.string.status_az_ist))
                 withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
-                            offline -> "NA"
-                            else -> ist?.let { "%.1f°".format(it) } ?: "NA"
+                            offline -> na
+                            else -> ist?.let { "%.1f°".format(it) } ?: na
                         },
                     )
                 }
-                append("  Soll: ")
+                append(stringResource(R.string.status_soll))
                 withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
-                            offline -> "NA"
-                            else -> soll?.let { "%.1f°".format(it) } ?: "NA"
+                            offline -> na
+                            else -> soll?.let { "%.1f°".format(it) } ?: na
                         },
                     )
                 }
                 when {
                     offline -> Unit
-                    state.rotor.azHoming -> append("  · Homing")
-                    state.rotor.moving -> append("  · fährt")
+                    state.rotor.azHoming -> append(suffixHoming)
+                    state.rotor.moving -> append(suffixMoving)
                 }
             },
             style = MaterialTheme.typography.bodyLarge,
@@ -1427,6 +1456,8 @@ private fun StatusCardAz(state: AppUiState) {
 @Composable
 private fun StatusCardEl(state: AppUiState) {
     val offline = !state.rotor.connected || !state.rotor.elOnline
+    val na = stringResource(R.string.value_na)
+    val suffixHoming = stringResource(R.string.status_suffix_homing)
     Card(
         colors = CardDefaults.cardColors(containerColor = BridgePanel),
         border = BorderStroke(1.dp, BridgeButtonBorder),
@@ -1434,27 +1465,27 @@ private fun StatusCardEl(state: AppUiState) {
     ) {
         Text(
             text = buildAnnotatedString {
-                append("EL Ist: ")
+                append(stringResource(R.string.status_el_ist))
                 withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
-                            offline -> "NA"
+                            offline -> na
                             else -> state.rotor.elSmoothDeg?.let { "%.1f°".format(it) }
                                 ?: state.rotor.elDeg?.let { "%.1f°".format(it) }
-                                ?: "NA"
+                                ?: na
                         },
                     )
                 }
-                append("  Soll: ")
+                append(stringResource(R.string.status_soll))
                 withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
-                            offline -> "NA"
-                            else -> state.rotor.elSollDeg?.let { "%.1f°".format(it) } ?: "NA"
+                            offline -> na
+                            else -> state.rotor.elSollDeg?.let { "%.1f°".format(it) } ?: na
                         },
                     )
                 }
-                if (!offline && state.rotor.elHoming) append("  · Homing")
+                if (!offline && state.rotor.elHoming) append(suffixHoming)
             },
             style = MaterialTheme.typography.bodyLarge,
             color = BridgeText,
@@ -1470,8 +1501,9 @@ private fun AngleField(
     enabled: Boolean,
     onGo: () -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "Winkel °",
+    label: String = "",
 ) {
+    val defaultLabel = if (label.isEmpty()) stringResource(R.string.label_angle_deg) else label
     BasicTextField(
         value = value,
         onValueChange = { raw ->
@@ -1501,7 +1533,7 @@ private fun AngleField(
             ) {
                 if (value.isEmpty()) {
                     Text(
-                        label,
+                        defaultLabel,
                         color = BridgeMuted,
                         fontSize = 13.sp,
                     )

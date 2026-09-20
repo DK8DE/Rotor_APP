@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -100,6 +101,10 @@ fun AzimuthCompass(
 ) {
     val context = LocalContext.current
     val windrose = remember(context) { WindroseCache.get(context) }
+    val labelN = stringResource(R.string.compass_n)
+    val labelS = stringResource(R.string.compass_s)
+    val labelE = stringResource(R.string.compass_e)
+    val labelW = stringResource(R.string.compass_w)
     val portrait =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     // Hochkant: Titel 2/3 größer; Werte etwas weniger (ragen sonst in den Kreis)
@@ -261,10 +266,10 @@ fun AzimuthCompass(
         }
 
         val cardR = r - (cardinalPaint.textSize * 1.35f)
-        drawContext.canvas.nativeCanvas.drawText("N", c.x, c.y - cardR + cardinalPaint.textSize / 3f, cardinalPaint)
-        drawContext.canvas.nativeCanvas.drawText("S", c.x, c.y + cardR + cardinalPaint.textSize / 3f, cardinalPaint)
-        drawContext.canvas.nativeCanvas.drawText("O", c.x + cardR, c.y + cardinalPaint.textSize / 3f, cardinalPaint)
-        drawContext.canvas.nativeCanvas.drawText("W", c.x - cardR, c.y + cardinalPaint.textSize / 3f, cardinalPaint)
+        drawContext.canvas.nativeCanvas.drawText(labelN, c.x, c.y - cardR + cardinalPaint.textSize / 3f, cardinalPaint)
+        drawContext.canvas.nativeCanvas.drawText(labelS, c.x, c.y + cardR + cardinalPaint.textSize / 3f, cardinalPaint)
+        drawContext.canvas.nativeCanvas.drawText(labelE, c.x + cardR, c.y + cardinalPaint.textSize / 3f, cardinalPaint)
+        drawContext.canvas.nativeCanvas.drawText(labelW, c.x - cardR, c.y + cardinalPaint.textSize / 3f, cardinalPaint)
 
         fun needle(deg: Float, color: Color, length: Float, width: Float) {
             val rad = Math.toRadians(wrap360(deg).toDouble())

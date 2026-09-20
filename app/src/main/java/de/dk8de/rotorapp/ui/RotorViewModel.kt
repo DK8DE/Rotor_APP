@@ -3,6 +3,7 @@ package de.dk8de.rotorapp.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import de.dk8de.rotorapp.AppLanguage
 import de.dk8de.rotorapp.data.PositionFavorite
 import de.dk8de.rotorapp.data.ProfileStore
 import de.dk8de.rotorapp.data.RotorProfile
@@ -110,6 +111,10 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                 repo.setDisplayRingPrefs(prefs.showStromRing, prefs.showDwellRing)
                 repo.setDwellSectorCount(prefs.dwellSectors)
             }
+        }
+        viewModelScope.launch {
+            val lang = runCatching { store.uiDisplayPrefs.first().appLanguage }.getOrDefault(AppLanguage.SYSTEM)
+            AppLanguage.apply(lang)
         }
         viewModelScope.launch {
             uiState.collect { state ->
@@ -340,6 +345,13 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     fun setLocation(lat: Double, lon: Double, locator: String = "") {
         viewModelScope.launch {
             store.setLocation(lat, lon, locator)
+        }
+    }
+
+    fun setAppLanguage(tag: String) {
+        viewModelScope.launch {
+            store.setAppLanguage(tag)
+            de.dk8de.rotorapp.AppLanguage.apply(tag)
         }
     }
 

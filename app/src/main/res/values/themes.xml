@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.RotorApp" parent="android:Theme.Material.NoActionBar">
+    <!-- AppCompat-Basis nötig für per-App-Sprache (AppCompatDelegate.setApplicationLocales). -->
+    <style name="Theme.RotorApp" parent="Theme.AppCompat.NoActionBar">
         <item name="android:statusBarColor">@color/splash_background</item>
         <item name="android:navigationBarColor">@color/splash_background</item>
         <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:colorBackground">@color/splash_background</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
     <style name="Theme.RotorApp.Splash" parent="Theme.SplashScreen">

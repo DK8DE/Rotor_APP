@@ -46,8 +46,10 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import de.dk8de.rotorapp.R
 import de.dk8de.rotorapp.geo.GeoUtils
 import de.dk8de.rotorapp.rotor.AntennaMath
 import de.dk8de.rotorapp.rotor.AntennaSlot
@@ -72,6 +74,9 @@ fun MapScreen(
     val latestState = rememberUpdatedState(state)
     val latestOnClick = rememberUpdatedState(onMapClickBearing)
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val mapBarHint = stringResource(R.string.map_bar_hint)
+    val mapLocatorOn = stringResource(R.string.map_locator_on)
+    val mapLocatorOff = stringResource(R.string.map_locator_off)
 
     fun pushLocatorOverlay(wv: WebView, show: Boolean) {
         wv.evaluateJavascript(
@@ -147,14 +152,14 @@ fun MapScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = "Karte · Tippen setzt AZ",
+                text = mapBarHint,
                 color = BridgeMuted,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(start = 4.dp),
             )
             TextButton(onClick = { locatorOverlay = !locatorOverlay }) {
                 Text(
-                    text = if (locatorOverlay) "Locator an" else "Locator aus",
+                    text = if (locatorOverlay) mapLocatorOn else mapLocatorOff,
                     color = if (locatorOverlay) BridgeText else Color(0xFF9E9E9E),
                     fontSize = 13.sp,
                 )
@@ -217,9 +222,10 @@ fun MapScreen(
                                 error: WebResourceError?,
                             ) {
                                 if (request?.isForMainFrame == true) {
+                                    val errMsg = ctx.getString(R.string.map_load_error)
                                     view?.loadData(
                                         "<html><body style='background:#222;color:#fff;font-family:sans-serif;padding:16px'>" +
-                                            "<p>Karte konnte nicht geladen werden.</p>" +
+                                            "<p>$errMsg</p>" +
                                             "<p>${error?.description ?: "?"}</p></body></html>",
                                         "text/html",
                                         "utf-8",
@@ -236,8 +242,11 @@ fun MapScreen(
                                     val bearing = GeoUtils.bearingDeg(slat, slon, lat, lon)
                                     val dist = GeoUtils.haversineKm(slat, slon, lat, lon)
                                     mainHandler.post {
-                                        lastStatus =
-                                            "Ziel ${"%.1f".format(bearing)}° · ${"%.1f".format(dist)} km"
+                                        lastStatus = ctx.getString(
+                                            R.string.map_click_status,
+                                            bearing,
+                                            dist,
+                                        )
                                         latestOnClick.value(bearing)
                                     }
                                 }
@@ -324,6 +333,11 @@ private fun MapWeatherOverlay(
     fun tempTxt(v: Double?): String =
         if (!connected) "–" else v?.let { "%.1f °C".format(it) } ?: "–"
 
+    val labelOutdoor = stringResource(R.string.hud_outdoor)
+    val labelMotorAz = stringResource(R.string.hud_motor_az)
+    val labelMotor = stringResource(R.string.hud_motor)
+    val labelMotorEl = stringResource(R.string.hud_motor_el)
+
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
@@ -380,10 +394,10 @@ private fun MapWeatherOverlay(
             verticalArrangement = Arrangement.spacedBy(2.dp),
             modifier = Modifier.padding(top = if (showWind) 2.dp else 0.dp),
         ) {
-            OverlayTempRow("Außen", tempTxt(ambient))
-            OverlayTempRow(if (elOn) "Motor AZ" else "Motor", tempTxt(motorAz))
+            OverlayTempRow(labelOutdoor, tempTxt(ambient))
+            OverlayTempRow(if (elOn) labelMotorAz else labelMotor, tempTxt(motorAz))
             if (elOn) {
-                OverlayTempRow("Motor EL", tempTxt(motorEl))
+                OverlayTempRow(labelMotorEl, tempTxt(motorEl))
             }
         }
     }

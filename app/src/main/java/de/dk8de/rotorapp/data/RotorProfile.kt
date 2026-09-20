@@ -26,9 +26,9 @@ data class RotorProfile(
      */
     val lastElRotorType: Int = 2,
 ) {
-    fun summary(): String {
-        val el = if (enableEl) "AZ+EL" else "nur AZ"
-        val wind = if (enableWind) " · Wind" else ""
+    fun summary(azElLabel: String, azOnlyLabel: String, windSuffix: String): String {
+        val el = if (enableEl) azElLabel else azOnlyLabel
+        val wind = if (enableWind) windSuffix else ""
         return "$name · $host:$port · $el$wind"
     }
 

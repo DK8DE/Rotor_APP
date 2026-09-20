@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import de.dk8de.rotorapp.AppLanguage
 import de.dk8de.rotorapp.geo.GeoUtils
 import de.dk8de.rotorapp.ui.theme.HeatmapScale
 import kotlinx.coroutines.flow.Flow
@@ -44,6 +45,8 @@ data class UiDisplayPrefs(
     val locationLat: Double = GeoUtils.DEFAULT_LAT,
     val locationLon: Double = GeoUtils.DEFAULT_LON,
     val locationLocator: String = "",
+    /** App-Sprache: system | de | en */
+    val appLanguage: String = AppLanguage.SYSTEM,
 ) {
     /** Gültige Custom-Skala oder null (= Auto). */
     fun stromHeatmapScale(): HeatmapScale? {
@@ -72,6 +75,7 @@ class ProfileStore(private val context: Context) {
     private val keyLocationLat = doublePreferencesKey("location_lat")
     private val keyLocationLon = doublePreferencesKey("location_lon")
     private val keyLocationLocator = stringPreferencesKey("location_locator")
+    private val keyAppLanguage = stringPreferencesKey("app_language")
     private val keyFavorites = stringPreferencesKey("position_favorites_json")
 
     val profiles: Flow<List<RotorProfile>> = context.profileDataStore.data.map { prefs ->
@@ -99,6 +103,7 @@ class ProfileStore(private val context: Context) {
             locationLat = prefs[keyLocationLat] ?: GeoUtils.DEFAULT_LAT,
             locationLon = prefs[keyLocationLon] ?: GeoUtils.DEFAULT_LON,
             locationLocator = prefs[keyLocationLocator] ?: "",
+            appLanguage = prefs[keyAppLanguage] ?: AppLanguage.SYSTEM,
         )
     }
 
@@ -162,6 +167,16 @@ class ProfileStore(private val context: Context) {
             prefs[keyLocationLat] = lat.coerceIn(-90.0, 90.0)
             prefs[keyLocationLon] = lon.coerceIn(-180.0, 180.0)
             prefs[keyLocationLocator] = locator.trim()
+        }
+    }
+
+    suspend fun setAppLanguage(tag: String) {
+        val normalized = when (tag) {
+            AppLanguage.DE, AppLanguage.EN -> tag
+            else -> AppLanguage.SYSTEM
+        }
+        context.profileDataStore.edit { prefs ->
+            prefs[keyAppLanguage] = normalized
         }
     }
 
