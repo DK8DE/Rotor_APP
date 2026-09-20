@@ -225,7 +225,7 @@ fun ProfilesScreen(
                 SettingsCheckRow(
                     checked = state.showStromRing,
                     onChange = onShowStromRingChange,
-                    title = "Stromverbrauch-Ring (GETACCBINS)",
+                    title = "Stromverbrauch-Ring",
                     subtitle = "36 Bins am Kompass, blau→rot nach Last",
                 )
                 HeatmapScaleEditor(

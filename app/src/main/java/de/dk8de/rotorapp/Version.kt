@@ -17,7 +17,7 @@ package de.dk8de.rotorapp
 object AppVersion {
     const val MAJOR = 1
     const val MINOR = 0
-    const val PATCH = 6
+    const val PATCH = 7
 
     /** Anzeige-String, z. B. `"0.1.0"`. */
     const val NAME: String = "$MAJOR.$MINOR.$PATCH"

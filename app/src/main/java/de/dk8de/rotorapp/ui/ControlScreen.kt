@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,10 +57,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -94,6 +97,7 @@ import de.dk8de.rotorapp.ui.theme.BridgePanel
 import de.dk8de.rotorapp.ui.theme.BridgeSoll
 import de.dk8de.rotorapp.ui.theme.BridgeStop
 import de.dk8de.rotorapp.ui.theme.BridgeText
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -101,6 +105,31 @@ private const val PAGE_QUICK = 0
 private const val PAGE_AZ = 1
 private const val PAGE_EL = 2
 
+/** Logische Navigation — überlebt Drehen unabhängig vom Pager-Index. */
+private const val NAV_QUICK = 0
+private const val NAV_AZ = 1
+private const val NAV_EL = 2
+private const val NAV_MAP = 3
+
+private fun navToPage(nav: Int, pageCount: Int, mapPageIndex: Int, dualAxes: Boolean): Int = when (nav) {
+    NAV_QUICK -> 0
+    NAV_MAP -> mapPageIndex
+    NAV_EL -> when {
+        dualAxes -> 1
+        mapPageIndex > PAGE_EL -> PAGE_EL // eigene EL-Seite
+        else -> 1
+    }
+    else -> 1 // AZ bzw. AZ/EL im Querformat
+}.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+
+/** @param dualAxes wenn true und Seite 1: null = AZ/EL gemeinsam, vorherigen AZ/EL-Nav behalten */
+private fun pageToNav(page: Int, mapPageIndex: Int, dualAxes: Boolean): Int? = when {
+    page <= 0 -> NAV_QUICK
+    page >= mapPageIndex -> NAV_MAP
+    dualAxes -> null // AZ+EL-Kombi — AZ/EL-Unterscheidung nicht überschreiben
+    page == PAGE_EL -> NAV_EL
+    else -> NAV_AZ
+}
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ControlScreen(
@@ -135,8 +164,13 @@ fun ControlScreen(
     }
     val pageCount = pageLabels.size
     val mapPageIndex = pageLabels.lastIndex
-    val pagerState = rememberPagerState(initialPage = PAGE_AZ.coerceAtMost(pageCount - 1)) {
-        pageCount
+    // AZ vs EL getrennt merken — sonst landet man nach Quer→Hochkant immer auf AZ
+    var navSection by rememberSaveable { mutableIntStateOf(NAV_AZ) }
+    val pagerState = remember(pageCount, dualAxes) {
+        PagerState(
+            currentPage = navToPage(navSection, pageCount, mapPageIndex, dualAxes),
+            pageCount = { pageCount },
+        )
     }
     val scope = rememberCoroutineScope()
     val onMapPage = pagerState.currentPage == mapPageIndex
@@ -146,36 +180,20 @@ fun ControlScreen(
         if (onMapPage) mapCached = true
     }
 
-    // Seitenindex nur bei Quer-/Hochkant-Wechsel mappen (sonst springt EL→Karte)
-    var prevDualAxes by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(dualAxes, pageCount, elevationEnabled) {
-        val page = pagerState.currentPage
-        val wasDual = prevDualAxes
-        prevDualAxes = dualAxes
-        if (wasDual == null || wasDual == dualAxes) {
-            if (page >= pageCount) {
-                pagerState.scrollToPage((pageCount - 1).coerceAtLeast(0))
+    LaunchedEffect(pagerState, mapPageIndex, dualAxes) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                val mapped = pageToNav(page, mapPageIndex, dualAxes)
+                if (mapped != null) {
+                    navSection = mapped
+                }
             }
-            return@LaunchedEffect
-        }
-        val target = if (dualAxes && elevationEnabled) {
-            // Hochkant → Quer: AZ/EL → Kompass, Karte → Karte
-            when (page) {
-                0 -> 0
-                1, 2 -> 1
-                else -> 2
-            }
-        } else if (!dualAxes && elevationEnabled) {
-            // Quer → Hochkant: AZ/EL → AZ, Karte → Karte
-            when (page) {
-                0 -> 0
-                1 -> 1
-                else -> 3
-            }
-        } else {
-            page.coerceAtMost(pageCount - 1)
-        }
-        if (target != page && target in 0 until pageCount) {
+    }
+
+    LaunchedEffect(pageCount, dualAxes, navSection) {
+        val target = navToPage(navSection, pageCount, mapPageIndex, dualAxes)
+        if (pagerState.currentPage != target) {
             pagerState.scrollToPage(target)
         }
     }
