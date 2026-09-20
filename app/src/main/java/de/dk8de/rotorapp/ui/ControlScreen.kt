@@ -146,9 +146,37 @@ fun ControlScreen(
         if (onMapPage) mapCached = true
     }
 
-    LaunchedEffect(pageCount, dualAxes) {
-        if (pagerState.currentPage >= pageCount) {
-            pagerState.scrollToPage((pageCount - 1).coerceAtLeast(0))
+    // Seitenindex nur bei Quer-/Hochkant-Wechsel mappen (sonst springt EL→Karte)
+    var prevDualAxes by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(dualAxes, pageCount, elevationEnabled) {
+        val page = pagerState.currentPage
+        val wasDual = prevDualAxes
+        prevDualAxes = dualAxes
+        if (wasDual == null || wasDual == dualAxes) {
+            if (page >= pageCount) {
+                pagerState.scrollToPage((pageCount - 1).coerceAtLeast(0))
+            }
+            return@LaunchedEffect
+        }
+        val target = if (dualAxes && elevationEnabled) {
+            // Hochkant → Quer: AZ/EL → Kompass, Karte → Karte
+            when (page) {
+                0 -> 0
+                1, 2 -> 1
+                else -> 2
+            }
+        } else if (!dualAxes && elevationEnabled) {
+            // Quer → Hochkant: AZ/EL → AZ, Karte → Karte
+            when (page) {
+                0 -> 0
+                1 -> 1
+                else -> 3
+            }
+        } else {
+            page.coerceAtMost(pageCount - 1)
+        }
+        if (target != page && target in 0 until pageCount) {
+            pagerState.scrollToPage(target)
         }
     }
 

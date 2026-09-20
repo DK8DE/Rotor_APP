@@ -463,7 +463,7 @@ fun antennaBeamColor(slot: Int): Color = when (slot.coerceIn(1, 3)) {
 }
 
 /**
- * Elevation: 90° = Viertelkreis (wie bisher), 180° = oberer Halbkreis 0…180.
+ * Elevation: 90° = Viertelkreis (0 links, 90 oben), 180° = Halbkreis (0 links, 90 oben, 180 rechts).
  */
 @Composable
 fun ElevationCompass(
@@ -484,9 +484,9 @@ fun ElevationCompass(
     val aspect = if (is180) 1.85f else 1.15f
     val portrait =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+    // Gleiche Skalen wie AZ-Kompass (Hochkant größer)
     val hudTitleScale = if (portrait) 5f / 3f else 1f
     val hudValueScale = if (portrait) 1.45f else 1f
-    // Ring auch ohne Messwerte: fehlende Segmente → Grün
     val showStrom = showStromRing
 
     Canvas(
@@ -496,23 +496,24 @@ fun ElevationCompass(
             .pointerInput(enabled, is180) {
                 if (!enabled) return@pointerInput
                 detectTapGestures { offset ->
+                    // 0 links / 90 oben / 180 rechts → Elev = 180 − atan2(up, right)
+                    val cx: Float
+                    val cy: Float
+                    val maxPick: Double
                     if (is180) {
-                        val cx = size.width * 0.5f
-                        val cy = size.height * 0.88f
-                        val dx = offset.x - cx
-                        val dy = cy - offset.y
-                        var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble()))
-                        deg = deg.coerceIn(0.0, 180.0)
-                        onPick(deg)
+                        cx = size.width * 0.5f
+                        cy = size.height * 0.88f
+                        maxPick = 180.0
                     } else {
-                        val cx = size.width * 0.12f
-                        val cy = size.height * 0.88f
-                        val dx = offset.x - cx
-                        val dy = cy - offset.y
-                        var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble()))
-                        deg = deg.coerceIn(0.0, 90.0)
-                        onPick(deg)
+                        cx = size.width * 0.88f
+                        cy = size.height * 0.88f
+                        maxPick = 90.0
                     }
+                    val dx = offset.x - cx
+                    val dy = cy - offset.y
+                    val mathDeg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble()))
+                    val elev = (180.0 - mathDeg).coerceIn(0.0, maxPick)
+                    onPick(elev)
                 }
             },
     ) {
@@ -520,8 +521,16 @@ fun ElevationCompass(
         val istWidth = 4.7.dp.toPx()
         val sollWidth = 4.dp.toPx()
         val ringW = 7.dp.toPx()
-        // Extra Platz außen: Heatmap-Ring + Gradzahlen weiter vom Begrenzungsstrich
         val outerBudget = if (showStrom) ringW + 14.dp.toPx() else 0f
+
+        /** Elevationswinkel → Zeichenrichtung: 0 links, 90 oben, 180 rechts. */
+        fun elevRad(elevDeg: Float): Double =
+            Math.toRadians((180f - elevDeg).toDouble())
+
+        fun elevUnit(elevDeg: Float): Pair<Float, Float> {
+            val rad = elevRad(elevDeg)
+            return cos(rad).toFloat() to (-sin(rad).toFloat())
+        }
 
         val origin: Offset
         val r: Float
@@ -542,19 +551,19 @@ fun ElevationCompass(
                 origin.x + r,
                 origin.y + r,
             )
-            // Füllung: oberer Halbkreis (0° rechts → 180° links über oben)
+            // Oberer Halbkreis: 0° links → 180° rechts über oben
+            // Compose: 0=rechts, 90=unten, 180=links, -90=oben; positiv = Uhrzeigersinn
             val fillPath = Path().apply {
                 moveTo(origin.x, origin.y)
-                lineTo(origin.x + r, origin.y) // 0°
-                arcTo(oval, startAngleDegrees = 0f, sweepAngleDegrees = -180f, forceMoveTo = false)
+                lineTo(origin.x - r, origin.y) // 0° links
+                arcTo(oval, startAngleDegrees = 180f, sweepAngleDegrees = 180f, forceMoveTo = false)
                 close()
             }
             drawPath(fillPath, BridgeBg)
-            val arcPath = Path().apply {
-                arcTo(oval, startAngleDegrees = 0f, sweepAngleDegrees = -180f, forceMoveTo = true)
-            }
             drawPath(
-                arcPath,
+                Path().apply {
+                    arcTo(oval, startAngleDegrees = 180f, sweepAngleDegrees = 180f, forceMoveTo = true)
+                },
                 BridgeRing,
                 style = Stroke(width = strokeW, cap = StrokeCap.Round),
             )
@@ -566,17 +575,18 @@ fun ElevationCompass(
                 cap = StrokeCap.Round,
             )
         } else {
-            // Platz oben/rechts für Beschriftung 0…90 alle 10° (+ ggf. Heatmap)
+            // Viertelkreis: Ursprung unten rechts — 0 links, 90 oben
             val labelRoom = 22.dp.toPx() + outerBudget
-            origin = Offset(size.width * 0.10f, size.height * 0.92f)
+            origin = Offset(size.width * 0.90f, size.height * 0.92f)
             r = minOf(
-                (size.width - origin.x) - labelRoom,
+                origin.x - labelRoom,
                 origin.y - labelRoom - strokeW,
             ).coerceAtLeast(24.dp.toPx())
             sweepMax = 90f
+            // Von links (180°) im Uhrzeigersinn nach oben (270°/−90°)
             drawArc(
                 color = BridgeBg,
-                startAngle = -90f,
+                startAngle = 180f,
                 sweepAngle = 90f,
                 useCenter = true,
                 topLeft = Offset(origin.x - r, origin.y - r),
@@ -584,7 +594,7 @@ fun ElevationCompass(
             )
             drawArc(
                 color = BridgeRing,
-                startAngle = -90f,
+                startAngle = 180f,
                 sweepAngle = 90f,
                 useCenter = false,
                 topLeft = Offset(origin.x - r, origin.y - r),
@@ -594,7 +604,7 @@ fun ElevationCompass(
             drawLine(
                 BridgeRing,
                 origin,
-                Offset(origin.x + r, origin.y),
+                Offset(origin.x - r, origin.y),
                 strokeWidth = strokeW,
                 cap = StrokeCap.Round,
             )
@@ -609,19 +619,18 @@ fun ElevationCompass(
 
         val tickStep = if (is180) 10 else 5
         for (i in 0..sweepMax.toInt() step tickStep) {
-            val rad = Math.toRadians(i.toDouble())
+            val (ux, uy) = elevUnit(i.toFloat())
             val major = i % 10 == 0
             val outer = r
             val inner = if (major) r - 12.dp.toPx() else r - 7.dp.toPx()
             drawLine(
                 BridgeTick,
-                Offset(origin.x + cos(rad).toFloat() * outer, origin.y - sin(rad).toFloat() * outer),
-                Offset(origin.x + cos(rad).toFloat() * inner, origin.y - sin(rad).toFloat() * inner),
+                Offset(origin.x + ux * outer, origin.y + uy * outer),
+                Offset(origin.x + ux * inner, origin.y + uy * inner),
                 strokeWidth = if (major) 2.dp.toPx() else 1.dp.toPx(),
             )
         }
 
-        // Strom-Heatmap außen am Begrenzungsstrich (Bridge: 26 nutzbare von 36 Bins)
         if (showStrom) {
             val vals = stromBins36.orEmpty()
             val skip = 5
@@ -630,7 +639,6 @@ fun ElevationCompass(
             } else if (vals.isNotEmpty()) {
                 vals
             } else {
-                // Noch keine Daten: volle nutzbare Spanne grün
                 List(26) { 0 }
             }
             val nUsed = used.size.coerceAtLeast(1)
@@ -644,11 +652,10 @@ fun ElevationCompass(
                 val color = stromBinHeatmapColor(v, stromHeatmapScale, vMin, vMax)
                 if (color.alpha <= 0f) continue
                 val a0 = i * step
-                val a1 = a0 + step
-                // Math-Winkel CCW → Compose: start bei -a1, Sweep clockwise
+                // Compose-Winkel: elev 0 → −180°, steigend im Uhrzeigersinn
                 drawArc(
                     color = color,
-                    startAngle = -a1,
+                    startAngle = a0 - 180f,
                     sweepAngle = step,
                     useCenter = false,
                     topLeft = Offset(origin.x - arcR, origin.y - arcR),
@@ -659,9 +666,7 @@ fun ElevationCompass(
         }
 
         fun needle(deg: Float, color: Color, length: Float, width: Float) {
-            val rad = Math.toRadians(deg.coerceIn(0f, sweepMax).toDouble())
-            val ux = cos(rad).toFloat()
-            val uy = -sin(rad).toFloat()
+            val (ux, uy) = elevUnit(deg.coerceIn(0f, sweepMax))
             val tipLen = 14.dp.toPx()
             val baseHalf = 5.5.dp.toPx()
             val tip = Offset(origin.x + ux * length, origin.y + uy * length)
@@ -694,54 +699,40 @@ fun ElevationCompass(
             )
             drawPath(
                 Path().apply {
-                    arcTo(oval, startAngleDegrees = 0f, sweepAngleDegrees = -180f, forceMoveTo = true)
+                    arcTo(oval, startAngleDegrees = 180f, sweepAngleDegrees = 180f, forceMoveTo = true)
                 },
                 BridgeRing,
                 style = Stroke(width = strokeW, cap = StrokeCap.Round),
             )
         }
 
+        // Gradzahlen wie AZ
         val labelPaint = android.graphics.Paint().apply {
             color = android.graphics.Color.WHITE
             textAlign = android.graphics.Paint.Align.CENTER
-            textSize = if (is180) {
-                (r * 0.055f).coerceIn(10.dp.toPx(), 13.dp.toPx())
-            } else {
-                // Dichter: alle 10° — etwas kleiner
-                (r * 0.048f).coerceIn(9.dp.toPx(), 12.dp.toPx())
-            }
+            textSize = (r * 0.055f).coerceIn(9.dp.toPx(), 12.dp.toPx())
             isAntiAlias = true
         }
         val fm = labelPaint.fontMetrics
         val labels = if (is180) {
             listOf(0, 30, 60, 90, 120, 150, 180)
         } else {
-            // Bei jedem dicken Strich
             (0..90 step 10).toList()
         }
-        // Gradzahlen weiter außen, damit der Heatmap-Ring Platz hat
         val labelGap = if (showStrom) ringW + labelPaint.textSize * 1.05f else labelPaint.textSize * 0.95f
         for (deg in labels) {
-            val rad = Math.toRadians(deg.toDouble())
-            val ux = cos(rad).toFloat()
-            val uy = -sin(rad).toFloat()
+            val (ux, uy) = elevUnit(deg.toFloat())
             val lr = r + labelGap
             var cx = origin.x + ux * lr
             var cy = origin.y + uy * lr
             when (deg) {
                 0 -> {
-                    cx += labelPaint.textSize * 0.25f
+                    cx -= labelPaint.textSize * 0.25f
                     cy += labelPaint.textSize * 0.15f
                 }
-                90 -> {
-                    if (is180) {
-                        cy -= labelPaint.textSize * 0.1f
-                    } else {
-                        cy -= labelPaint.textSize * 0.05f
-                    }
-                }
+                90 -> cy -= labelPaint.textSize * 0.1f
                 180 -> {
-                    cx -= labelPaint.textSize * 0.25f
+                    cx += labelPaint.textSize * 0.25f
                     cy += labelPaint.textSize * 0.15f
                 }
             }
@@ -755,40 +746,30 @@ fun ElevationCompass(
             drawContext.canvas.nativeCanvas.drawText(text, cx, baseline, labelPaint)
         }
 
-        // Motor EL oben rechts — 90°-Modus: r ist groß, HUD an Gradzahlen anbinden
+        // Motor EL — gleiche Größenformel wie AZ-HUD
         hudTopRight?.let { (title, value) ->
             val edgePad = 4.dp.toPx()
-            val titleSize: Float
-            val valueSize: Float
-            val lineGap: Float
-            if (is180) {
-                titleSize = (r * 0.055f * hudTitleScale)
-                    .coerceIn(10.dp.toPx(), 14.dp.toPx())
-                valueSize = (r * 0.068f * hudValueScale)
-                    .coerceIn(12.dp.toPx(), 16.dp.toPx())
-                lineGap = (2.dp.toPx() * hudTitleScale).coerceAtLeast(2.dp.toPx())
-            } else {
-                // Viertelkreis: gleicher Maßstab wie Gradbeschriftung (~9–12 dp)
-                titleSize = (r * 0.042f).coerceIn(9.dp.toPx(), 11.dp.toPx())
-                valueSize = (r * 0.052f).coerceIn(11.dp.toPx(), 13.dp.toPx())
-                lineGap = 2.dp.toPx()
-            }
+            val titleSize = (r * 0.062f * hudTitleScale).coerceAtLeast(11.dp.toPx())
+            val valueSize = (r * 0.078f * hudValueScale).coerceAtLeast(13.dp.toPx())
+            val lineGap = (2.dp.toPx() * hudTitleScale).coerceAtLeast(2.dp.toPx())
             val titlePaint = android.graphics.Paint().apply {
                 color = android.graphics.Color.parseColor("#9A9A9A")
                 textSize = titleSize
                 isAntiAlias = true
                 isFakeBoldText = true
-                textAlign = android.graphics.Paint.Align.RIGHT
+                // 90°-Modus: Ursprung rechts → HUD oben links, sonst oben rechts
+                textAlign = if (is180) {
+                    android.graphics.Paint.Align.RIGHT
+                } else {
+                    android.graphics.Paint.Align.LEFT
+                }
             }
-            val valuePaint = android.graphics.Paint().apply {
+            val valuePaint = android.graphics.Paint(titlePaint).apply {
                 color = android.graphics.Color.parseColor("#E8E8E8")
                 textSize = valueSize
-                isAntiAlias = true
-                isFakeBoldText = true
-                textAlign = android.graphics.Paint.Align.RIGHT
             }
             val nc = drawContext.canvas.nativeCanvas
-            val x = size.width - edgePad
+            val x = if (is180) size.width - edgePad else edgePad
             val titleBase = edgePad - titlePaint.ascent()
             nc.drawText(title, x, titleBase, titlePaint)
             val valueBase = titleBase + titlePaint.descent() + lineGap - valuePaint.ascent()
