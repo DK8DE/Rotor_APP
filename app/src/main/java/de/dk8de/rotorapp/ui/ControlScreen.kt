@@ -1425,7 +1425,6 @@ private fun StatusCardAz(state: AppUiState) {
     val soll = state.rotor.azSollDisplay()
     val na = stringResource(R.string.value_na)
     val suffixHoming = stringResource(R.string.status_suffix_homing)
-    val suffixMoving = stringResource(R.string.status_suffix_moving)
     Card(
         colors = CardDefaults.cardColors(containerColor = BridgePanel),
         border = BorderStroke(1.dp, BridgeButtonBorder),
@@ -1454,11 +1453,8 @@ private fun StatusCardAz(state: AppUiState) {
                         },
                     )
                 }
-                when {
-                    offline -> Unit
-                    state.rotor.azHoming -> append("   $suffixHoming")
-                    state.rotor.moving -> append("   $suffixMoving")
-                }
+                // Fahrt selbst zeigt der Kompass — hier nur Homing als Zusatz.
+                if (!offline && state.rotor.azHoming) append("   $suffixHoming")
             },
             style = MaterialTheme.typography.bodyLarge,
             color = BridgeText,

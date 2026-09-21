@@ -92,6 +92,8 @@ fun ProfilesScreen(
     onHeatmapFromBins: () -> Unit,
     onLocationSave: (lat: Double, lon: Double, locator: String) -> Unit,
     onAppLanguageChange: (String) -> Unit,
+    onCheckUpdate: () -> Unit,
+    updateCheckState: UpdateCheckState,
 ) {
     var editing by remember { mutableStateOf<RotorProfile?>(null) }
     var showAbout by remember { mutableStateOf(false) }
@@ -358,13 +360,21 @@ fun ProfilesScreen(
     }
 
     if (showAbout) {
-        AboutDialog(onDismiss = { showAbout = false })
+        AboutDialog(
+            onDismiss = { showAbout = false },
+            onCheckUpdate = onCheckUpdate,
+            updateCheckState = updateCheckState,
+        )
     }
 }
 
 /** Übliche „Über die App“-Box: Version, Autor/Rufzeichen, Lizenz mit Link. */
 @Composable
-private fun AboutDialog(onDismiss: () -> Unit) {
+private fun AboutDialog(
+    onDismiss: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    updateCheckState: UpdateCheckState,
+) {
     val context = LocalContext.current
     val licenseUrl = stringResource(R.string.about_license_url)
     AlertDialog(
@@ -411,6 +421,21 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                     color = BridgeMuted,
                     fontSize = 12.sp,
                 )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                BridgeButton(
+                    text = stringResource(R.string.btn_check_update),
+                    onClick = onCheckUpdate,
+                    enabled = updateCheckState != UpdateCheckState.Checking,
+                )
+                val hint = when (updateCheckState) {
+                    UpdateCheckState.Checking -> stringResource(R.string.update_checking)
+                    UpdateCheckState.UpToDate -> stringResource(R.string.update_uptodate)
+                    UpdateCheckState.Failed -> stringResource(R.string.update_failed)
+                    else -> null
+                }
+                hint?.let {
+                    Text(it, color = BridgeMuted, fontSize = 12.sp)
+                }
             }
         },
         confirmButton = {
@@ -911,12 +936,13 @@ private fun ProfileEditor(
         mutableStateOf(if (initial.windDirMode.equals("to", true)) "to" else "from")
     }
     val focusManager = LocalFocusManager.current
+    val fallbackName = stringResource(R.string.profile_default_name)
 
     fun commit() {
         focusManager.clearFocus()
         onSave(
             initial.copy(
-                name = name.trim().ifEmpty { "Rotor" },
+                name = name.trim().ifEmpty { fallbackName },
                 host = host.trim(),
                 port = port.toIntOrNull() ?: 8886,
                 masterId = masterId.toIntOrNull() ?: 7,

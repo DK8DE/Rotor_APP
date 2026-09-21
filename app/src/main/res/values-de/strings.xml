@@ -59,7 +59,6 @@
     <string name="status_el_ist">EL Ist:</string>
     <string name="status_soll">Soll:</string>
     <string name="status_suffix_homing">· Homing</string>
-    <string name="status_suffix_moving">· fährt</string>
     <string name="compact_ist">Ist:</string>
     <string name="compact_soll">Soll:</string>
     <string name="compass_n">N</string>
@@ -77,6 +76,7 @@
     <string name="section_profiles">Profile</string>
     <string name="profile_active">aktiv · %1$s</string>
     <string name="profile_new_name">Neu</string>
+    <string name="profile_default_name">Rotor</string>
     <string name="profile_edit_title">Profil bearbeiten</string>
     <string name="profile_summary_az_el">AZ+EL</string>
     <string name="profile_summary_az_only">nur AZ</string>
@@ -153,6 +153,14 @@
     <string name="about_license">Lizenz</string>
     <string name="about_license_notice">Lizenziert unter der Apache License, Version 2.0</string>
     <string name="action_close">Schließen</string>
+    <string name="btn_check_update">NACH UPDATE SUCHEN</string>
+    <string name="update_title">Neue Version verfügbar</string>
+    <string name="update_message">Version %1$s steht auf GitHub bereit.\nInstalliert: %2$s</string>
+    <string name="update_download">Herunterladen</string>
+    <string name="update_later">Später</string>
+    <string name="update_checking">Suche…</string>
+    <string name="update_uptodate">Version ist aktuell.</string>
+    <string name="update_failed">Prüfung fehlgeschlagen – kein Internet?</string>
 
     <string name="status_disconnected">Getrennt</string>
     <string name="status_connection_failed">Verbindung fehlgeschlagen</string>

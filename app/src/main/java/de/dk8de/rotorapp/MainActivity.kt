@@ -1,13 +1,21 @@
 package de.dk8de.rotorapp
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -20,6 +28,10 @@ import androidx.navigation.compose.rememberNavController
 import de.dk8de.rotorapp.ui.ControlScreen
 import de.dk8de.rotorapp.ui.ProfilesScreen
 import de.dk8de.rotorapp.ui.RotorViewModel
+import de.dk8de.rotorapp.ui.theme.BridgeAccent
+import de.dk8de.rotorapp.ui.theme.BridgeMuted
+import de.dk8de.rotorapp.ui.theme.BridgePanel
+import de.dk8de.rotorapp.ui.theme.BridgeText
 import de.dk8de.rotorapp.ui.theme.RotorAppTheme
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -39,8 +51,10 @@ class MainActivity : AppCompatActivity() {
                 val vm: RotorViewModel = viewModel()
                 val state by vm.uiState.collectAsStateWithLifecycle()
                 val startupReady by vm.startupReady.collectAsStateWithLifecycle()
+                val update by vm.updateInfo.collectAsStateWithLifecycle()
                 val nav = rememberNavController()
                 val lifecycleOwner = LocalLifecycleOwner.current
+                val context = LocalContext.current
 
                 LaunchedEffect(startupReady) {
                     if (startupReady) keepSplash.set(false)
@@ -109,10 +123,57 @@ class MainActivity : AppCompatActivity() {
                                 vm.setLocation(lat, lon, loc)
                             },
                             onAppLanguageChange = vm::setAppLanguage,
+                            onCheckUpdate = vm::checkForUpdateNow,
+                            updateCheckState = vm.updateCheckState
+                                .collectAsStateWithLifecycle().value,
                         )
                     }
+                }
+
+                update?.let { info ->
+                    UpdateDialog(
+                        version = info.version,
+                        onDownload = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl)),
+                                )
+                            }
+                            vm.dismissUpdate()
+                        },
+                        onDismiss = vm::dismissUpdate,
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun UpdateDialog(
+    version: String,
+    onDownload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.update_title), color = BridgeText) },
+        text = {
+            Text(
+                stringResource(R.string.update_message, version, AppVersion.NAME),
+                color = BridgeMuted,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDownload) {
+                Text(stringResource(R.string.update_download), color = BridgeAccent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.update_later), color = BridgeMuted)
+            }
+        },
+        containerColor = BridgePanel,
+    )
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Rotor App</string>
+    <string name="app_name">Rotator App</string>
 
     <!-- Common -->
     <string name="action_go">GO</string>
@@ -48,7 +48,7 @@
     <string name="btn_home_el">HOME EL</string>
     <string name="antenna_section">Antenna</string>
     <string name="antenna_connect_hint">Connect to select an antenna</string>
-    <string name="antenna_az_required_hint">Antenna selection requires an AZ rotor</string>
+    <string name="antenna_az_required_hint">Antenna selection requires an AZ rotator</string>
     <string name="antenna_active">active</string>
     <string name="antenna_fallback">Antenna %1$d</string>
 
@@ -64,7 +64,6 @@
     <string name="status_el_ist">EL actual:</string>
     <string name="status_soll">Target:</string>
     <string name="status_suffix_homing">· Homing</string>
-    <string name="status_suffix_moving">· moving</string>
     <string name="compact_ist">Actual:</string>
     <string name="compact_soll">Target:</string>
     <string name="compass_n">N</string>
@@ -84,6 +83,7 @@
     <string name="section_profiles">Profiles</string>
     <string name="profile_active">active · %1$s</string>
     <string name="profile_new_name">New</string>
+    <string name="profile_default_name">Rotator</string>
     <string name="profile_edit_title">Edit profile</string>
     <string name="profile_summary_az_el">AZ+EL</string>
     <string name="profile_summary_az_only">AZ only</string>
@@ -92,9 +92,9 @@
     <string name="language_system">System default</string>
     <string name="language_de">German</string>
     <string name="language_en">English</string>
-    <string name="section_antennas">Antennas (AZ rotor)</string>
-    <string name="antennas_connect_hint">Connect to read and save antenna values from the rotor.</string>
-    <string name="antennas_az_required_hint">Antenna settings require an online AZ rotor.</string>
+    <string name="section_antennas">Antennas (AZ rotator)</string>
+    <string name="antennas_connect_hint">Connect to read and save antenna values from the rotator.</string>
+    <string name="antennas_az_required_hint">Antenna settings require an online AZ rotator.</string>
     <string name="antenna_slot">Antenna %1$d</string>
     <string name="antenna_unnamed">unnamed</string>
     <string name="antenna_dipole_suffix">· Dipole</string>
@@ -161,6 +161,14 @@
     <string name="about_license">License</string>
     <string name="about_license_notice">Licensed under the Apache License, Version 2.0</string>
     <string name="action_close">Close</string>
+    <string name="btn_check_update">CHECK FOR UPDATE</string>
+    <string name="update_title">Update available</string>
+    <string name="update_message">Version %1$s is available on GitHub.\nInstalled: %2$s</string>
+    <string name="update_download">Download</string>
+    <string name="update_later">Later</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_uptodate">You are up to date.</string>
+    <string name="update_failed">Check failed – no internet?</string>
     <string name="about_author" translatable="false">Jörg Körner</string>
     <string name="about_callsign_value" translatable="false">DK8DE</string>
     <string name="about_license_value" translatable="false">Apache License 2.0</string>

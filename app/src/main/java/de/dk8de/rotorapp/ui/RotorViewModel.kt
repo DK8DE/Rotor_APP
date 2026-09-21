@@ -12,6 +12,8 @@ import de.dk8de.rotorapp.rotor.AntennaSlot
 import de.dk8de.rotorapp.rotor.RotorAxis
 import de.dk8de.rotorapp.rotor.RotorLiveState
 import de.dk8de.rotorapp.rotor.RotorRepository
+import de.dk8de.rotorapp.update.UpdateChecker
+import de.dk8de.rotorapp.update.UpdateInfo
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+/** Ergebnis der manuellen Update-Prüfung im Info-Dialog. */
+enum class UpdateCheckState {
+    Idle,
+    Checking,
+    Found,
+    UpToDate,
+    Failed,
+}
 
 data class AppUiState(
     val profiles: List<RotorProfile> = emptyList(),
@@ -86,6 +97,17 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     private val _startupReady = MutableStateFlow(false)
     val startupReady: StateFlow<Boolean> = _startupReady
 
+    /** Gefundenes Update (GitHub-Release), null = keins bzw. weggeklickt. */
+    private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
+    val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
+
+    /** Nur für die manuelle Prüfung im Info-Dialog. */
+    private val _updateCheckState = MutableStateFlow(UpdateCheckState.Idle)
+    val updateCheckState: StateFlow<UpdateCheckState> = _updateCheckState
+
+    /** Automatische Prüfung nur einmal pro App-Start. */
+    private var autoUpdateChecked = false
+
     init {
         // Splash sofort beenden, sobald Profile da sind — nicht auf TCP warten
         viewModelScope.launch {
@@ -116,6 +138,7 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
             val lang = runCatching { store.uiDisplayPrefs.first().appLanguage }.getOrDefault(AppLanguage.SYSTEM)
             AppLanguage.apply(lang)
         }
+        checkForUpdateOnStart()
         viewModelScope.launch {
             uiState.collect { state ->
                 val p = state.activeProfile ?: return@collect
@@ -142,6 +165,42 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Einmal pro App-Start im Hintergrund nach einer neueren Version sehen.
+     * Schlägt still fehl, wenn das WLAN am Rotor kein Internet hat.
+     */
+    private fun checkForUpdateOnStart() {
+        if (autoUpdateChecked) return
+        autoUpdateChecked = true
+        viewModelScope.launch {
+            delay(2_000) // Start und Rotor-Verbindung nicht ausbremsen
+            val found = runCatching { UpdateChecker.findNewerRelease() }.getOrNull()
+            if (found != null) _updateInfo.value = found
+        }
+    }
+
+    /** Info-Dialog: „Nach Update suchen“ mit sichtbarem Ergebnis. */
+    fun checkForUpdateNow() {
+        if (_updateCheckState.value == UpdateCheckState.Checking) return
+        viewModelScope.launch {
+            _updateCheckState.value = UpdateCheckState.Checking
+            val result = runCatching { UpdateChecker.findNewerRelease() }
+            _updateCheckState.value = when {
+                result.isFailure -> UpdateCheckState.Failed
+                result.getOrNull() != null -> UpdateCheckState.Found
+                else -> UpdateCheckState.UpToDate
+            }
+            result.getOrNull()?.let { _updateInfo.value = it }
+        }
+    }
+
+    fun dismissUpdate() {
+        _updateInfo.value = null
+        if (_updateCheckState.value == UpdateCheckState.Found) {
+            _updateCheckState.value = UpdateCheckState.Idle
         }
     }
 
