@@ -28,7 +28,7 @@ data class RotorProfile(
 ) {
     fun summary(azElLabel: String, azOnlyLabel: String, windSuffix: String): String {
         val el = if (enableEl) azElLabel else azOnlyLabel
-        val wind = if (enableWind) windSuffix else ""
+        val wind = if (enableWind) " $windSuffix" else ""
         return "$name · $host:$port · $el$wind"
     }
 

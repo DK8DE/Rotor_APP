@@ -483,12 +483,26 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         if (pollJob?.isActive != true) {
             pollJob = viewModelScope.launch {
                 var lastPosPollMs = 0L
+                var reconnectBackoffMs = 1_000L
                 while (isActive) {
+                    // Nie ungeschützt: eine Exception hier würde den Poll-Job beenden
+                    // und damit jeden Reconnect bis zum App-Neustart verhindern.
+                    runCatching { repo.syncLinkState() }
+                    // Rotor stromlos aus → Socket bleibt halb offen, nur Timeouts.
+                    runCatching { repo.checkLinkAlive() }
                     val s = repo.state.value
                     when {
-                        !s.connected -> {
-                            runCatching { repo.ensureConnectedOrReconnect(staleAfterMs = 0L) }
-                            delay(2_000L)
+                        !s.connected || !repo.isTcpUp -> {
+                            val ok = runCatching {
+                                repo.ensureConnectedOrReconnect(staleAfterMs = 0L)
+                            }.getOrDefault(false)
+                            if (ok) {
+                                reconnectBackoffMs = 1_000L
+                                delay(200L)
+                            } else {
+                                delay(reconnectBackoffMs)
+                                reconnectBackoffMs = (reconnectBackoffMs * 2).coerceAtMost(10_000L)
+                            }
                         }
                         s.busPassive -> {
                             delay(200L)

@@ -44,6 +44,7 @@
     <string name="btn_home_el">HOME EL</string>
     <string name="antenna_section">Antenne</string>
     <string name="antenna_connect_hint">Verbinden, um Antenne zu wählen</string>
+    <string name="antenna_az_required_hint">Antennenauswahl braucht einen AZ-Rotor</string>
     <string name="antenna_active">aktiv</string>
     <string name="antenna_fallback">Antenne %1$d</string>
 
@@ -54,13 +55,13 @@
     <string name="hud_wind">Wind</string>
     <string name="label_angle_deg">Winkel °</string>
     <string name="label_elevation_deg">Elevation °</string>
-    <string name="status_az_ist">AZ Ist: </string>
-    <string name="status_el_ist">EL Ist: </string>
-    <string name="status_soll">  Soll: </string>
-    <string name="status_suffix_homing">  · Homing</string>
-    <string name="status_suffix_moving">  · fährt</string>
-    <string name="compact_ist">Ist: </string>
-    <string name="compact_soll">  Soll: </string>
+    <string name="status_az_ist">AZ Ist:</string>
+    <string name="status_el_ist">EL Ist:</string>
+    <string name="status_soll">Soll:</string>
+    <string name="status_suffix_homing">· Homing</string>
+    <string name="status_suffix_moving">· fährt</string>
+    <string name="compact_ist">Ist:</string>
+    <string name="compact_soll">Soll:</string>
     <string name="compass_n">N</string>
     <string name="compass_s">S</string>
     <string name="compass_e">O</string>
@@ -79,17 +80,18 @@
     <string name="profile_edit_title">Profil bearbeiten</string>
     <string name="profile_summary_az_el">AZ+EL</string>
     <string name="profile_summary_az_only">nur AZ</string>
-    <string name="profile_summary_wind"> · Wind</string>
+    <string name="profile_summary_wind">· Wind</string>
     <string name="section_language">Sprache</string>
     <string name="language_system">Systemstandard</string>
     <string name="language_de">Deutsch</string>
     <string name="language_en">Englisch</string>
     <string name="section_antennas">Antennen (AZ-Rotor)</string>
     <string name="antennas_connect_hint">Verbinden, um Antennenwerte vom Rotor zu lesen und zu speichern.</string>
+    <string name="antennas_az_required_hint">Antenneneinstellungen brauchen einen online AZ-Rotor.</string>
     <string name="antenna_slot">Antenne %1$d</string>
     <string name="antenna_unnamed">ohne Name</string>
-    <string name="antenna_dipole_suffix"> · Dipol</string>
-    <string name="antenna_active_suffix"> · aktiv</string>
+    <string name="antenna_dipole_suffix">· Dipol</string>
+    <string name="antenna_active_suffix">· aktiv</string>
     <string name="field_antenna_name">Name (max. 9)</string>
     <string name="field_offset_deg">Versatzwinkel °</string>
     <string name="field_opening_deg">Öffnungswinkel °</string>
@@ -142,6 +144,15 @@
     <string name="wind_mode_to_title">Wohin der Wind weht</string>
     <string name="wind_mode_to_sub">Pfeil zeigt in Windrichtung</string>
     <string name="btn_save_profile">SPEICHERN</string>
+
+    <string name="section_about">Info</string>
+    <string name="btn_version">VERSION</string>
+    <string name="about_version">Version</string>
+    <string name="about_developer">Entwickler</string>
+    <string name="about_callsign">Rufzeichen</string>
+    <string name="about_license">Lizenz</string>
+    <string name="about_license_notice">Lizenziert unter der Apache License, Version 2.0</string>
+    <string name="action_close">Schließen</string>
 
     <string name="status_disconnected">Getrennt</string>
     <string name="status_connection_failed">Verbindung fehlgeschlagen</string>

@@ -279,7 +279,7 @@ fun MapScreen(
             )
 
             if (active) {
-                MapWeatherOverlay(
+                MapWindOverlay(
                     state = state,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -300,11 +300,9 @@ fun MapScreen(
     }
 }
 
-/**
- * Windrichtung/-geschwindigkeit + Temperaturen oben rechts (wie Bridge MapWindOverlay + Temp-Zeile).
- */
+/** Windrichtung und -geschwindigkeit oben rechts auf der Karte (ohne Temperaturen). */
 @Composable
-private fun MapWeatherOverlay(
+private fun MapWindOverlay(
     state: AppUiState,
     modifier: Modifier = Modifier,
 ) {
@@ -315,10 +313,8 @@ private fun MapWeatherOverlay(
             state.rotor.windKmh != null ||
             state.rotor.windDirDeg != null
         )
-    val ambient = state.rotor.tempAmbientC
-    val motorAz = state.rotor.tempMotorAzC
-    val motorEl = state.rotor.tempMotorElC
-    val elOn = state.activeProfile?.enableEl == true
+    if (!showWind) return
+
     val windDirMode = state.windDirMode
     val rawDir = state.rotor.windDirDeg
     val drawDir = rawDir?.let { d ->
@@ -330,13 +326,6 @@ private fun MapWeatherOverlay(
         state.rotor.windKmh != null -> "%.1f km/h".format(state.rotor.windKmh)
         else -> "–.– km/h"
     }
-    fun tempTxt(v: Double?): String =
-        if (!connected) "–" else v?.let { "%.1f °C".format(it) } ?: "–"
-
-    val labelOutdoor = stringResource(R.string.hud_outdoor)
-    val labelMotorAz = stringResource(R.string.hud_motor_az)
-    val labelMotor = stringResource(R.string.hud_motor)
-    val labelMotorEl = stringResource(R.string.hud_motor_el)
 
     val shape = RoundedCornerShape(8.dp)
     Column(
@@ -348,71 +337,43 @@ private fun MapWeatherOverlay(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (showWind) {
-            Canvas(modifier = Modifier.size(52.dp)) {
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val r = size.minDimension * 0.38f
-                drawCircle(
-                    color = Color(0x66FFFFFF),
-                    radius = r * 1.15f,
-                    center = Offset(cx, cy),
-                    style = Stroke(width = 1.2f),
-                )
-                drawDir?.let { deg ->
-                    rotate(degrees = deg.toFloat(), pivot = Offset(cx, cy)) {
-                        val shaft = Path().apply {
-                            moveTo(cx, cy + r * 0.75f)
-                            lineTo(cx, cy - r * 0.55f)
-                        }
-                        drawPath(
-                            path = shaft,
-                            color = Color(0xFF5EB5F7),
-                            style = Stroke(width = 3.5f, cap = StrokeCap.Round),
-                        )
-                        val tip = Path().apply {
-                            moveTo(cx, cy - r * 0.95f)
-                            lineTo(cx - r * 0.28f, cy - r * 0.35f)
-                            lineTo(cx + r * 0.28f, cy - r * 0.35f)
-                            close()
-                        }
-                        drawPath(tip, color = Color(0xFF5EB5F7))
+        Canvas(modifier = Modifier.size(52.dp)) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val r = size.minDimension * 0.38f
+            drawCircle(
+                color = Color(0x66FFFFFF),
+                radius = r * 1.15f,
+                center = Offset(cx, cy),
+                style = Stroke(width = 1.2f),
+            )
+            drawDir?.let { deg ->
+                rotate(degrees = deg.toFloat(), pivot = Offset(cx, cy)) {
+                    val shaft = Path().apply {
+                        moveTo(cx, cy + r * 0.75f)
+                        lineTo(cx, cy - r * 0.55f)
                     }
+                    drawPath(
+                        path = shaft,
+                        color = Color(0xFF5EB5F7),
+                        style = Stroke(width = 3.5f, cap = StrokeCap.Round),
+                    )
+                    val tip = Path().apply {
+                        moveTo(cx, cy - r * 0.95f)
+                        lineTo(cx - r * 0.28f, cy - r * 0.35f)
+                        lineTo(cx + r * 0.28f, cy - r * 0.35f)
+                        close()
+                    }
+                    drawPath(tip, color = Color(0xFF5EB5F7))
                 }
             }
-            Text(
-                text = windTxt,
-                color = BridgeText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-            )
         }
-
-        Column(
-            horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.padding(top = if (showWind) 2.dp else 0.dp),
-        ) {
-            OverlayTempRow(labelOutdoor, tempTxt(ambient))
-            OverlayTempRow(if (elOn) labelMotorAz else labelMotor, tempTxt(motorAz))
-            if (elOn) {
-                OverlayTempRow(labelMotorEl, tempTxt(motorEl))
-            }
-        }
-    }
-}
-
-@Composable
-private fun OverlayTempRow(label: String, value: String) {
-    Column {
-        Text(text = label, color = BridgeMuted, fontSize = 10.sp, lineHeight = 12.sp)
         Text(
-            text = value,
+            text = windTxt,
             color = BridgeText,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            lineHeight = 15.sp,
+            textAlign = TextAlign.Center,
         )
     }
 }

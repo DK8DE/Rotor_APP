@@ -60,6 +60,13 @@ data class RotorLiveState(
     val moving: Boolean = false,
     val azReferenced: Boolean = false,
     val elReferenced: Boolean = false,
+    /**
+     * Referenzstatus stammt aus einer echten GETREF-Antwort (bzw. SETREF).
+     * Ohne das Flag würde eine nur über den Bus erkannte Online-Achse
+     * fälschlich „HOME nötig“ melden, da GETREF im Idle nicht mehr gepollt wird.
+     */
+    val azRefKnown: Boolean = false,
+    val elRefKnown: Boolean = false,
     val azHoming: Boolean = false,
     val elHoming: Boolean = false,
     val pwmAz: Int? = null,
@@ -86,7 +93,7 @@ data class RotorLiveState(
     val elWarnIds: List<Int> = emptyList(),
     /** Antennen 1–3 (AZ-Rotor). */
     val antennas: List<AntennaSlot> = listOf(AntennaSlot(), AntennaSlot(), AntennaSlot()),
-    /** Gewählte Antenne 1–3 (GETASELECT / SETASELECT). */
+    /** Gewählte Antenne 1–3 (GETASELECT / SETASELECT am AZ-Rotor). */
     val selectedAntenna: Int = 1,
     /**
      * Bei Dipol: Soll-Peilung für die Anzeige (angetippte Richtung),
@@ -268,6 +275,13 @@ class RotorRepository(context: android.content.Context) {
     }
     private val ioMutex = Mutex()
 
+    init {
+        // Socket tot (WLAN weg) → UI-State sofort „getrennt“, damit der Poll-Job reconnectet
+        link.onDisconnected = {
+            markLinkLost("TCP getrennt")
+        }
+    }
+
     private val azSmoother = AngleSmoother(wrap360 = true)
     private val elSmoother = AngleSmoother(wrap360 = false)
     private val _state = MutableStateFlow(RotorLiveState())
@@ -277,6 +291,10 @@ class RotorRepository(context: android.content.Context) {
     private var lastHost: String = profile.host
     private var lastPort: Int = profile.port
 
+    /** Aktuelle Watchdog-Schwelle (steigt, wenn Reconnect nichts bringt). */
+    @Volatile
+    private var linkSilenceLimitMs: Long = LINK_SILENCE_MS
+
     /** Wenn GETROTORTYPE einen neuen EL-Typ liefert: Profil-Cache speichern. */
     var onElRotorTypeCached: ((RotorProfile) -> Unit)? = null
     /** Wind enable aus GETWINDENABLE → Profil/Haken anpassen. */
@@ -284,6 +302,9 @@ class RotorRepository(context: android.content.Context) {
 
     /** Nach Profil-Speichern: SETWINDENABLE beim nächsten Connect (sonst nur GET). */
     private var pendingWindEnableWrite: Boolean? = null
+    /** Fremdes ACK_SETASELECT ohne Slot → GETASELECT nachholen. */
+    @Volatile
+    private var pendingAntennaSelectRefresh = false
 
     fun requestWindEnableWrite(enabled: Boolean) {
         pendingWindEnableWrite = enabled
@@ -446,6 +467,12 @@ class RotorRepository(context: android.content.Context) {
         /** Nach SETPOS: Fast-GETPOS erzwingen (Deadman), auch wenn moving kurz false. */
         private const val SETPOS_MOTION_HOLD_MS = 2_500L
         private const val FAIL_STREAK_OFFLINE = 2
+        /**
+         * Funkstille auf dem Socket, ab der die Verbindung als tot gilt.
+         * Ein abgeschalteter Rotor schließt den Socket nicht — ohne diesen
+         * Watchdog bliebe die App „verbunden“ und würde nie neu verbinden.
+         */
+        private const val LINK_SILENCE_MS = 12_000L
     }
 
     fun activeProfile(): RotorProfile = profile
@@ -477,6 +504,8 @@ class RotorRepository(context: android.content.Context) {
             moving = false,
             azReferenced = false,
             elReferenced = !p.enableEl,
+            azRefKnown = false,
+            elRefKnown = !p.enableEl,
             azHoming = false,
             elHoming = false,
             pwmAz = null,
@@ -527,6 +556,8 @@ class RotorRepository(context: android.content.Context) {
                 busPassive = false,
                 azReferenced = false,
                 elReferenced = !profile.enableEl,
+                azRefKnown = false,
+                elRefKnown = !profile.enableEl,
                 azHoming = false,
                 elHoming = false,
                 azRotorType = 1,
@@ -573,6 +604,8 @@ class RotorRepository(context: android.content.Context) {
                 busPassive = false,
                 azReferenced = false,
                 elReferenced = !profile.enableEl,
+                azRefKnown = false,
+                elRefKnown = !profile.enableEl,
                 azHoming = false,
                 elHoming = false,
                 azRotorType = 1,
@@ -602,6 +635,8 @@ class RotorRepository(context: android.content.Context) {
             busPassive = false,
             azReferenced = false,
             elReferenced = !profile.enableEl,
+            azRefKnown = false,
+            elRefKnown = !profile.enableEl,
             azHoming = false,
             elHoming = false,
             azOnline = false,
@@ -639,6 +674,7 @@ class RotorRepository(context: android.content.Context) {
      * sonst killt onForeground den Connect während des Startup-Reads.
      */
     suspend fun ensureConnectedOrReconnect(staleAfterMs: Long = 15_000L): Boolean {
+        syncLinkState()
         val now = System.currentTimeMillis()
         if (client.isConnected && _state.value.connected) {
             val neverPolled = lastOkPollMs == 0L
@@ -649,6 +685,58 @@ class RotorRepository(context: android.content.Context) {
             runCatching { disconnect() }
         }
         return connect(lastHost.ifBlank { profile.host }, lastPort, quietFail = true)
+    }
+
+    /** TCP-Flag und UI-State angleichen (Socket kann tot sein, UI noch „verbunden“). */
+    fun syncLinkState() {
+        if (_state.value.connected && !client.isConnected) {
+            markLinkLost("TCP tot")
+        }
+    }
+
+    /**
+     * Rotor stromlos abgeschaltet: Der Socket bleibt halb offen — Reads laufen nur
+     * in den Timeout, ein Fehler kommt nie. Kommt über längere Zeit kein einziges
+     * Byte, wird hart getrennt, damit der Poll-Job neu verbinden kann.
+     */
+    suspend fun checkLinkAlive() {
+        if (!_state.value.connected || !client.isConnected) return
+        val silent = client.linkSilenceMs
+        if (silent < 2_000L) {
+            // Es fließen Daten → Verbindung gesund, Watchdog wieder scharf stellen.
+            linkSilenceLimitMs = LINK_SILENCE_MS
+            return
+        }
+        if (silent < linkSilenceLimitMs) return
+        runCatching { client.disconnect() }
+        markLinkLost("Keine Daten seit ${silent / 1000}s → Reconnect")
+        // Bridge erreichbar, aber Bus stumm (alle Achsen aus): nicht endlos im
+        // 12-s-Takt neu verbinden, sondern Abstand vergrößern.
+        linkSilenceLimitMs = (linkSilenceLimitMs * 2).coerceAtMost(60_000L)
+    }
+
+    val isTcpUp: Boolean get() = client.isConnected && _state.value.connected
+
+    private fun markLinkLost(reason: String) {
+        val prev = _state.value
+        if (!prev.connected && !client.isConnected) return
+        azSmoother.clear()
+        elSmoother.clear()
+        _state.value = prev.copy(
+            connected = false,
+            statusText = str(R.string.status_disconnected),
+            lastLog = reason,
+            moving = false,
+            busPassive = false,
+            azOnline = false,
+            elOnline = false,
+            azHoming = false,
+            elHoming = false,
+            azDeg = null,
+            elDeg = null,
+            azSmoothDeg = null,
+            elSmoothDeg = null,
+        )
     }
     /**
      * Render-Tick wie Bridge-Kompass (~33 ms): SmoothDamp/Segment-Lerp fortschreiben.
@@ -834,15 +922,18 @@ class RotorRepository(context: android.content.Context) {
         )
     }
 
-    /** Passiv Bus mitlauschen (SETPOSCC / fremdes SETPOSDG / Positions-ACKs). */
+    /** Passiv Bus mitlauschen (SETPOSCC / fremdes SETPOSDG / SETASELECT / …). */
     suspend fun sniffBus(waitMs: Long = 40) {
         if (!client.isConnected) return
-        // Während Fast-Poll: Sniff nicht den Bus-Mutex blockieren
-        if (needsFastPoll()) return
+        // Auch während Fast-Poll/Motion-Hold drainen, sobald der Mutex frei ist —
+        // sonst gehen fremde SETASELECT zwischen den Polls verloren.
         if (!ioMutex.tryLock()) return
         try {
-            if (needsFastPoll()) return
             client.drainBus(waitMs)
+            if (pendingAntennaSelectRefresh && _state.value.azOnline) {
+                pendingAntennaSelectRefresh = false
+                refreshAntennaSelectLocked()
+            }
         } finally {
             ioMutex.unlock()
         }
@@ -854,7 +945,9 @@ class RotorRepository(context: android.content.Context) {
             cmd == "SETPOSCC" -> applySetPosCc(tel)
             cmd == "SETPOSDG" -> applySetPosDgFromBus(tel)
             cmd.startsWith("ACK_SETPOSDG") -> applyAckSetPosDgFromBus(tel)
-            cmd == "SETASELECT" || cmd.startsWith("ACK_GETASELECT") -> applyAntennaSelectFromBus(tel)
+            cmd == "SETASELECT" ||
+                cmd.startsWith("ACK_GETASELECT") ||
+                cmd.startsWith("ACK_SETASELECT") -> applyAntennaSelectFromBus(tel)
             cmd == "SETPWM" || cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM") ->
                 applyPwmFromBus(tel)
             cmd == "STOP" -> applyStopFromBus(tel)
@@ -914,23 +1007,56 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
-    /** SETASELECT Broadcast (DST 255) oder ACK_GETASELECT — UI an HW-Auswahl. */
+    /**
+     * Fremdes SETASELECT an unsere AZ-Slave-ID (oder älter Broadcast 255) /
+     * ACK_SETASELECT / ACK_GETASELECT vom AZ → Auswahl in der UI übernehmen.
+     * Quelle kann jeder andere Master sein (andere Bus-ID).
+     */
     private fun applyAntennaSelectFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
         val cmd = tel.cmd.trim().uppercase()
-        val isAck = cmd.startsWith("ACK_GETASELECT")
-        if (!isAck) {
-            val dstOk = tel.dst == de.dk8de.rotorapp.protocol.Rs485Protocol.BROADCAST_DST
+        val saz = profile.slaveAz
+        val isSet = cmd == "SETASELECT"
+        val isAckSet = cmd.startsWith("ACK_SETASELECT")
+        val isAckGet = cmd.startsWith("ACK_GETASELECT")
+        if (!isSet && !isAckSet && !isAckGet) return
+
+        if (isSet) {
+            val dstOk = tel.dst == saz ||
+                tel.dst == de.dk8de.rotorapp.protocol.Rs485Protocol.BROADCAST_DST
             if (!dstOk) return
+            // Eigenes Echo: UI schon in selectAntenna gesetzt — trotzdem ok (gleicher Slot = no-op)
+        } else {
+            // ACK kommt vom AZ-Rotor, DST = anfragender Master (fremd oder wir)
+            if (tel.src != saz) return
         }
-        val n = de.dk8de.rotorapp.protocol.Rs485Protocol.parseDegree(tel.params)?.toInt() ?: return
-        if (n !in 1..3) return
+
+        val n = de.dk8de.rotorapp.protocol.Rs485Protocol.parseDegree(tel.params)?.toInt()
+        if (n == null || n !in 1..3) {
+            // ACK ohne Slot-Nummer → beim nächsten Idle vom AZ nachlesen
+            if (isAckSet || isAckGet) pendingAntennaSelectRefresh = true
+            return
+        }
+
         val prev = _state.value
-        if (prev.selectedAntenna == n) return
+        val fromForeignMaster = isSet && tel.src != profile.masterId
+        val fromForeignAck = (isAckSet || isAckGet) && tel.dst != profile.masterId
+        if (prev.selectedAntenna == n) {
+            if (fromForeignMaster || fromForeignAck) {
+                _state.value = prev.copy(lastLog = "Bus Antenne $n (Master ${tel.src})")
+            }
+            return
+        }
         azDipoleLastRotorAz = null
         _state.value = prev.copy(
             selectedAntenna = n,
             azDipoleDisplayBearing = null,
-            lastLog = if (isAck) "GETASELECT $n" else "Bus SETASELECT $n",
+            lastLog = when {
+                isAckGet -> "GETASELECT AZ $n"
+                isAckSet && fromForeignAck -> "Bus ACK_SETASELECT $n (→${tel.dst})"
+                isAckSet -> "ACK_SETASELECT $n"
+                fromForeignMaster -> "Bus SETASELECT $n (Master ${tel.src})"
+                else -> "SETASELECT $n"
+            },
         )
     }
 
@@ -1157,6 +1283,7 @@ class RotorRepository(context: android.content.Context) {
                 azHoming = true,
                 azOnline = true,
                 azReferenced = false,
+                azRefKnown = true,
                 azErrorCode = 0,
                 moving = false,
                 azTarget = null,
@@ -1168,6 +1295,7 @@ class RotorRepository(context: android.content.Context) {
                 elHoming = true,
                 elOnline = true,
                 elReferenced = false,
+                elRefKnown = true,
                 elErrorCode = 0,
                 moving = false,
                 elTarget = null,
@@ -1373,6 +1501,8 @@ class RotorRepository(context: android.content.Context) {
             var elDeg = cur.elDeg
             var azReferenced = cur.azReferenced
             var elReferenced = cur.elReferenced
+            var azRefKnown = cur.azRefKnown
+            var elRefKnown = cur.elRefKnown
             var azSmooth = cur.azSmoothDeg
             var elSmooth = cur.elSmoothDeg
             var azTarget = cur.azTarget
@@ -1399,6 +1529,7 @@ class RotorRepository(context: android.content.Context) {
                         azDeg = null
                         azSmooth = null
                         azReferenced = false
+                        azRefKnown = false
                         azTarget = null
                         azCompass = null
                         azSmoother.clear()
@@ -1421,6 +1552,7 @@ class RotorRepository(context: android.content.Context) {
                         elDeg = null
                         elSmooth = null
                         elReferenced = false
+                        elRefKnown = false
                         elTarget = null
                         elCompass = null
                         elSmoother.clear()
@@ -1477,12 +1609,22 @@ class RotorRepository(context: android.content.Context) {
                 elOnline = if (profile.enableEl) elOnline else false,
                 azReferenced = azReferenced,
                 elReferenced = if (profile.enableEl) elReferenced else true,
+                azRefKnown = azRefKnown,
+                elRefKnown = if (profile.enableEl) elRefKnown else true,
                 azTarget = azTarget,
                 elTarget = elTarget,
                 azCompassTarget = azCompass,
                 elCompassTarget = elCompass,
                 moving = moving,
-                statusText = statusTextFor(azOnline, elOnline, azReferenced, elReferenced, cur),
+                statusText = statusTextFor(
+                    azOnline,
+                    elOnline,
+                    azReferenced,
+                    elReferenced,
+                    cur,
+                    azKnown = azRefKnown,
+                    elKnown = if (profile.enableEl) elRefKnown else true,
+                ),
             )
     }
 
@@ -1521,12 +1663,14 @@ class RotorRepository(context: android.content.Context) {
                 cur = cur.copy(
                     azOnline = true,
                     azReferenced = azRef == 1,
+                    azRefKnown = true,
                     statusText = statusTextFor(
                         true,
                         cur.elOnline,
                         azRef == 1,
                         cur.elReferenced,
                         cur,
+                        azKnown = true,
                     ),
                     lastLog = "GETREF AZ=$azRef (online)",
                 )
@@ -1548,6 +1692,8 @@ class RotorRepository(context: android.content.Context) {
                     )
                     _state.value = cur
                 }
+                // Antennenauswahl/-werte vom AZ nachziehen (war offline beim Connect)
+                runCatching { refreshAntennasLocked() }
             }
         }
 
@@ -1567,6 +1713,7 @@ class RotorRepository(context: android.content.Context) {
                 cur = _state.value.copy(
                     elOnline = true,
                     elReferenced = elRef == 1,
+                    elRefKnown = true,
                     elRotorType = resolvedType,
                     elMaxDeg = elMaxFromType(resolvedType),
                     statusText = statusTextFor(
@@ -1575,6 +1722,7 @@ class RotorRepository(context: android.content.Context) {
                         _state.value.azReferenced,
                         elRef == 1,
                         _state.value,
+                        elKnown = true,
                     ),
                     lastLog = "GETREF EL=$elRef TYPE=$resolvedType (online)",
                 )
@@ -1612,6 +1760,11 @@ class RotorRepository(context: android.content.Context) {
         }
         // Nach SETPOS / während Fahrt: kein Idle-GETREF (Offline sowieso nie hier)
         if (userCmdPending || _state.value.moving || isMotionHoldActive() || idleExtrasDeferred()) return
+        // Online + referenziert → gar nichts fragen, der Bus bleibt im Idle frei.
+        val s = _state.value
+        val azNeedRef = s.azOnline && (!s.azRefKnown || !s.azReferenced)
+        val elNeedRef = profile.enableEl && s.elOnline && (!s.elRefKnown || !s.elReferenced)
+        if (!azNeedRef && !elNeedRef) return
         if (!ioMutex.tryLock()) return
         try {
             if (userCmdPending || _state.value.moving || isMotionHoldActive()) return
@@ -1639,6 +1792,7 @@ class RotorRepository(context: android.content.Context) {
                 azHoming = true,
                 azOnline = true,
                 azReferenced = false,
+                azRefKnown = true,
                 azErrorCode = 0, // SETREF quittiert Fehler
                 moving = false,
                 azTarget = null,
@@ -1650,6 +1804,7 @@ class RotorRepository(context: android.content.Context) {
                 elHoming = true,
                 elOnline = true,
                 elReferenced = false,
+                elRefKnown = true,
                 elErrorCode = 0,
                 moving = false,
                 elTarget = null,
@@ -1661,9 +1816,55 @@ class RotorRepository(context: android.content.Context) {
         true
     }
 
+    /**
+     * Referenzstatus nur bei Bedarf klären: Eine Achse kann allein über Bus-Telegramme
+     * online werden, ohne dass je ein GETREF beantwortet wurde. Statt im Idle zu pollen,
+     * wird genau dann einmal gefragt, wenn eine Bewegung davon abhängt.
+     */
+    private suspend fun ensureRefKnownLocked(axis: RotorAxis) {
+        val s = _state.value
+        val online = if (axis == RotorAxis.AZ) s.azOnline else s.elOnline
+        val known = if (axis == RotorAxis.AZ) s.azRefKnown else s.elRefKnown
+        if (!online || known || s.homing) return
+        val dst = if (axis == RotorAxis.AZ) profile.slaveAz else profile.slaveEl
+        val ref = runCatching {
+            client.getRef(dst, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+        }.getOrNull() ?: return
+        val cur = _state.value
+        _state.value = when (axis) {
+            RotorAxis.AZ -> cur.copy(
+                azReferenced = ref == 1,
+                azRefKnown = true,
+                statusText = statusTextFor(
+                    cur.azOnline,
+                    cur.elOnline,
+                    ref == 1,
+                    cur.elReferenced,
+                    cur,
+                    azKnown = true,
+                ),
+                lastLog = "GETREF AZ=$ref",
+            )
+            RotorAxis.EL -> cur.copy(
+                elReferenced = ref == 1,
+                elRefKnown = true,
+                statusText = statusTextFor(
+                    cur.azOnline,
+                    cur.elOnline,
+                    cur.azReferenced,
+                    ref == 1,
+                    cur,
+                    elKnown = true,
+                ),
+                lastLog = "GETREF EL=$ref",
+            )
+        }
+    }
+
     suspend fun setAzimuth(displayDeg: Double): Boolean = ioMutex.withLock {
         client.clearAbortAwait()
         ensureConnected()
+        ensureRefKnownLocked(RotorAxis.AZ)
         val s = takeBusControl(_state.value)
         if (!s.azReferenced || s.azHoming) {
             _state.value = s.copy(
@@ -1751,6 +1952,8 @@ class RotorRepository(context: android.content.Context) {
     suspend fun parkAzimuth(): Boolean = ioMutex.withLock {
         client.clearAbortAwait()
         ensureConnected()
+        ensureRefKnownLocked(RotorAxis.AZ)
+        if (profile.enableEl) ensureRefKnownLocked(RotorAxis.EL)
         val s = takeBusControl(_state.value)
         if (!s.azReferenced || s.azHoming) {
             _state.value = s.copy(
@@ -1874,6 +2077,7 @@ class RotorRepository(context: android.content.Context) {
         client.clearAbortAwait()
         if (!profile.enableEl) return@withLock false
         ensureConnected()
+        ensureRefKnownLocked(RotorAxis.EL)
         val s = takeBusControl(_state.value)
         if (!s.elReferenced || s.elHoming) {
             _state.value = s.copy(
@@ -1984,9 +2188,10 @@ class RotorRepository(context: android.content.Context) {
         refreshAntennasLocked()
     }
 
-    /** Antenne 1–3 wählen und SETASELECT broadcasten (kein Nachdrehen). */
+    /** Antenne 1–3 am AZ-Rotor speichern (SETASELECT); ohne AZ offline. */
     suspend fun selectAntenna(slot: Int): Boolean = ioMutex.withLock {
         if (!client.isConnected) return@withLock false
+        if (!_state.value.azOnline) return@withLock false
         val n = slot.coerceIn(1, 3)
         val prev = _state.value
         if (prev.selectedAntenna != n) {
@@ -1997,13 +2202,17 @@ class RotorRepository(context: android.content.Context) {
                 lastLog = "Antenne $n gewählt",
             )
         }
-        runCatching { client.broadcastAntennaSelect(n) }
-        true
+        val ok = runCatching { client.setAntennaSelect(profile.slaveAz, n) }.getOrDefault(false)
+        if (!ok) {
+            _state.value = _state.value.copy(lastLog = "SETASELECT AZ fehlgeschlagen")
+        }
+        ok
     }
 
     /** Antennen-Slot am AZ-Rotor schreiben und State aktualisieren. */
     suspend fun writeAntennaSlot(slot: Int, data: AntennaSlot): Boolean = ioMutex.withLock {
         ensureConnected()
+        if (!_state.value.azOnline) return@withLock false
         val n = slot.coerceIn(1, 3)
         val dst = profile.slaveAz
         val off = AntennaMath.wrap360(data.offsetDeg.coerceIn(0.0, 360.0))
@@ -2043,6 +2252,8 @@ class RotorRepository(context: android.content.Context) {
     }
 
     private suspend fun refreshAntennasLocked() {
+        // Antennenwerte + Auswahl liegen im AZ-Rotor-NVS — ohne AZ nichts lesen/schreiben
+        if (!_state.value.azOnline) return
         val dst = profile.slaveAz
         val to = 450L
         val prevList = _state.value.antennas
@@ -2071,32 +2282,42 @@ class RotorRepository(context: android.content.Context) {
                 neu.rangeKm != alt.rangeKm
         }
         val hadCache = prevList.any { it.openingDeg > 0.5 || it.name.isNotBlank() }
+        var selected = _state.value.selectedAntenna
+        val hw = runCatching { client.getAntennaSelect(dst, timeoutMs = to) }.getOrNull()
+        if (hw != null) selected = hw.coerceIn(1, 3)
+
         if (!anyRead && hadCache) {
-            // Nur Slot-Auswahl ggf. aktualisieren
-            var selected = _state.value.selectedAntenna
-            val ctrl = profile.controllerId
-            if (ctrl in 1..254) {
-                val hw = runCatching { client.getAntennaSelect(ctrl, timeoutMs = to) }.getOrNull()
-                if (hw != null) selected = hw
-            }
             if (selected != _state.value.selectedAntenna) {
+                azDipoleLastRotorAz = null
                 _state.value = _state.value.copy(
-                    selectedAntenna = selected.coerceIn(1, 3),
+                    selectedAntenna = selected,
+                    azDipoleDisplayBearing = null,
                     lastLog = "Antennen-Cache behalten · Slot $selected",
                 )
             }
             return
         }
-        var selected = _state.value.selectedAntenna
-        val ctrl = profile.controllerId
-        if (ctrl in 1..254) {
-            val hw = runCatching { client.getAntennaSelect(ctrl, timeoutMs = to) }.getOrNull()
-            if (hw != null) selected = hw
-        }
         _state.value = _state.value.copy(
             antennas = slots,
             selectedAntenna = selected.coerceIn(1, 3),
             lastLog = "Antennen gelesen · Slot $selected",
+        )
+    }
+
+    /** Nur GETASELECT am AZ (nach fremdem Wechsel / ACK ohne Slot-Nummer). */
+    private suspend fun refreshAntennaSelectLocked() {
+        if (!_state.value.azOnline) return
+        val hw = runCatching {
+            client.getAntennaSelect(profile.slaveAz, timeoutMs = 450L)
+        }.getOrNull() ?: return
+        val selected = hw.coerceIn(1, 3)
+        val prev = _state.value
+        if (prev.selectedAntenna == selected) return
+        azDipoleLastRotorAz = null
+        _state.value = prev.copy(
+            selectedAntenna = selected,
+            azDipoleDisplayBearing = null,
+            lastLog = "GETASELECT AZ $selected (Bus-Sync)",
         )
     }
 
@@ -2299,13 +2520,23 @@ class RotorRepository(context: android.content.Context) {
             elOnline = if (profile.enableEl) elIsOnline else false,
             azReferenced = if (azIsOnline) azOk else false,
             elReferenced = if (!profile.enableEl) true else if (elIsOnline) elOk else false,
+            azRefKnown = azIsOnline,
+            elRefKnown = if (!profile.enableEl) true else elIsOnline,
             azHoming = false,
             elHoming = false,
             azDeg = if (azIsOnline) cur.azDeg else null,
             elDeg = if (profile.enableEl && elIsOnline) cur.elDeg else null,
             azSmoothDeg = if (azIsOnline) cur.azSmoothDeg else null,
             elSmoothDeg = if (profile.enableEl && elIsOnline) cur.elSmoothDeg else null,
-            statusText = statusTextFor(azIsOnline, elIsOnline, azOk, elOk, cur.copy(azHoming = false, elHoming = false)),
+            statusText = statusTextFor(
+                azIsOnline,
+                elIsOnline,
+                azOk,
+                elOk,
+                cur.copy(azHoming = false, elHoming = false),
+                azKnown = azIsOnline,
+                elKnown = if (!profile.enableEl) true else elIsOnline,
+            ),
             lastLog = buildString {
                 append("GETREF AZ=")
                 append(azRef?.toString() ?: "NA")
@@ -2327,38 +2558,63 @@ class RotorRepository(context: android.content.Context) {
 
         var azRef: Int? = null
         var elRef: Int? = if (!profile.enableEl) 1 else null
+        // Nur wo wirklich gefragt wurde, darf ein Timeout als Fehlversuch zählen.
+        var azAsked = false
+        var elAsked = false
 
         // Offline-Achsen hier NICHT pollen — nur probeOfflineAxes (5 s, Idle).
         // Homing-Achse zuerst; Gegenachse nur wenn online (Keepalive).
         when {
             elHomingActive && !azHomingActive -> {
+                elAsked = true
                 elRef = runCatching {
                     client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                 }.getOrNull()
                 if (before.azOnline) {
+                    azAsked = true
                     azRef = runCatching {
                         client.getRef(profile.slaveAz, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
                     }.getOrNull()
                 }
             }
             azHomingActive && !elHomingActive -> {
+                azAsked = true
                 azRef = runCatching {
                     client.getRef(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                 }.getOrNull()
                 if (profile.enableEl && before.elOnline) {
+                    elAsked = true
                     elRef = runCatching {
                         client.getRef(profile.slaveEl, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
                     }.getOrNull()
                 }
             }
+            azHomingActive && elHomingActive -> {
+                azAsked = true
+                azRef = runCatching {
+                    client.getRef(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                }.getOrNull()
+                elAsked = true
+                elRef = runCatching {
+                    client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                }.getOrNull()
+            }
             else -> {
-                // Idle-GETREF: nur Online-Achsen
-                if (before.azOnline || azHomingActive) {
+                // Idle: Online-Achsen werden NICHT mehr zyklisch mit GETREF belastet.
+                // Nur nachfragen, wenn der Referenzstatus unbekannt ist (Achse kam über
+                // den Bus online) oder als „nicht referenziert“ gilt — sonst bliebe ein
+                // fremdes HOME unbemerkt und die Achse dauerhaft gesperrt.
+                if (before.azOnline && (!before.azRefKnown || !before.azReferenced)) {
+                    azAsked = true
                     azRef = runCatching {
                         client.getRef(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                     }.getOrNull()
                 }
-                if (profile.enableEl && (before.elOnline || elHomingActive)) {
+                if (profile.enableEl &&
+                    before.elOnline &&
+                    (!before.elRefKnown || !before.elReferenced)
+                ) {
+                    elAsked = true
                     elRef = runCatching {
                         client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                     }.getOrNull()
@@ -2374,7 +2630,8 @@ class RotorRepository(context: android.content.Context) {
             if (azRef != null) {
                 azFailStreak = 0
                 azOnlineOut = true
-            } else if (azHomingActive) {
+            } else if (azHomingActive || !azAsked) {
+                // Nicht gefragt → kein Fehlversuch, Online-Status bleibt wie er war.
                 azOnlineOut = true
             } else {
                 azFailStreak++
@@ -2392,7 +2649,7 @@ class RotorRepository(context: android.content.Context) {
                 if (elRef != null) {
                     elFailStreak = 0
                     elOnlineOut = true
-                } else if (elHomingActive) {
+                } else if (elHomingActive || !elAsked) {
                     elOnlineOut = true
                 } else {
                     elFailStreak++
@@ -2440,12 +2697,25 @@ class RotorRepository(context: android.content.Context) {
             !elOnlineOut -> false
             else -> cur.elReferenced
         }
+        val azRefKnown = when {
+            azRef != null || azHomingActive -> true
+            !azOnlineOut -> false
+            else -> cur.azRefKnown
+        }
+        val elRefKnown = when {
+            !profile.enableEl -> true
+            elRef != null || elHomingActive -> true
+            !elOnlineOut -> false
+            else -> cur.elRefKnown
+        }
 
         _state.value = cur.copy(
             azOnline = azOnlineOut,
             elOnline = if (profile.enableEl) elOnlineOut else false,
             azReferenced = azReferenced,
             elReferenced = elReferenced,
+            azRefKnown = azRefKnown,
+            elRefKnown = elRefKnown,
             azHoming = azHoming,
             elHoming = elHoming,
             azDeg = if (azOnlineOut) cur.azDeg else null,
@@ -2453,7 +2723,8 @@ class RotorRepository(context: android.content.Context) {
             azSmoothDeg = if (azOnlineOut) cur.azSmoothDeg else null,
             elSmoothDeg = if (profile.enableEl && elOnlineOut) cur.elSmoothDeg else null,
             moving = if (
-                (!azReferenced && azOnlineOut || !elReferenced && elOnlineOut) &&
+                (!azReferenced && azRefKnown && azOnlineOut ||
+                    !elReferenced && elRefKnown && elOnlineOut) &&
                 !azHoming && !elHoming && cur.referenced
             ) {
                 false
@@ -2466,13 +2737,29 @@ class RotorRepository(context: android.content.Context) {
                 azReferenced,
                 elReferenced,
                 cur.copy(azHoming = azHoming, elHoming = elHoming),
+                azKnown = azRefKnown,
+                elKnown = elRefKnown,
             ),
             lastLog = buildString {
                 append("GETREF AZ=")
-                append(azRef?.toString() ?: if (azHomingActive) "…" else if (!before.azOnline) "off" else "NA")
+                append(
+                    azRef?.toString() ?: when {
+                        azHomingActive -> "…"
+                        !before.azOnline -> "off"
+                        !azAsked -> "skip"
+                        else -> "NA"
+                    },
+                )
                 if (profile.enableEl) {
                     append(" EL=")
-                    append(elRef?.toString() ?: if (elHomingActive) "…" else if (!before.elOnline) "off" else "NA")
+                    append(
+                        elRef?.toString() ?: when {
+                            elHomingActive -> "…"
+                            !before.elOnline -> "off"
+                            !elAsked -> "skip"
+                            else -> "NA"
+                        },
+                    )
                 }
             },
         )
@@ -2487,6 +2774,8 @@ class RotorRepository(context: android.content.Context) {
         azOk: Boolean,
         elOk: Boolean,
         s: RotorLiveState,
+        azKnown: Boolean = s.azRefKnown,
+        elKnown: Boolean = s.elRefKnown,
     ): String {
         val fault = faultStatusText(s)
         if (fault.isNotBlank() && s.hasFault) return fault
@@ -2494,8 +2783,9 @@ class RotorRepository(context: android.content.Context) {
         if (s.azHoming) return str(R.string.status_homing_az)
         if (s.elHoming) return str(R.string.status_homing_el)
         if (fault.isNotBlank()) return fault // Warnungen nach Homing-Hinweis
-        val azNeed = azOnline && !azOk
-        val elNeed = profile.enableEl && elOnline && !elOk
+        // Ohne bestätigte GETREF-Antwort kein „HOME nötig“ (Idle pollt GETREF nicht mehr).
+        val azNeed = azOnline && azKnown && !azOk
+        val elNeed = profile.enableEl && elOnline && elKnown && !elOk
         return when {
             azNeed && elNeed -> str(R.string.status_az_el_unref)
             azNeed -> str(R.string.status_az_unref)

@@ -1,5 +1,7 @@
 package de.dk8de.rotorapp.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -18,11 +21,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -35,6 +39,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,9 +50,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import de.dk8de.rotorapp.AppLanguage
+import de.dk8de.rotorapp.AppVersion
 import de.dk8de.rotorapp.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -87,6 +94,7 @@ fun ProfilesScreen(
     onAppLanguageChange: (String) -> Unit,
 ) {
     var editing by remember { mutableStateOf<RotorProfile?>(null) }
+    var showAbout by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.rotor.connected) {
         if (state.rotor.connected) onRefreshAntennas()
@@ -217,6 +225,13 @@ fun ProfilesScreen(
                         fontSize = 13.sp,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
                     )
+                } else if (!state.rotor.azOnline) {
+                    Text(
+                        stringResource(R.string.antennas_az_required_hint),
+                        color = BridgeMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    )
                 }
             }
             items(3) { index ->
@@ -225,7 +240,7 @@ fun ProfilesScreen(
                 AntennaEditorCard(
                     slot = slot,
                     initial = ant,
-                    enabled = state.rotor.connected,
+                    enabled = state.rotor.connected && state.rotor.azOnline,
                     selected = state.rotor.selectedAntenna == slot,
                     onSave = { onSaveAntenna(slot, it) },
                 )
@@ -322,8 +337,101 @@ fun ProfilesScreen(
                 )
             }
 
+            // —— Info / Version ——
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    stringResource(R.string.section_about),
+                    color = BridgeAccent,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+                BridgeButton(
+                    text = stringResource(R.string.btn_version),
+                    onClick = { showAbout = true },
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                )
+            }
+
             // —— Ende Einstellungen ——
         }
+    }
+
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
+    }
+}
+
+/** Übliche „Über die App“-Box: Version, Autor/Rufzeichen, Lizenz mit Link. */
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val licenseUrl = stringResource(R.string.about_license_url)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                stringResource(R.string.app_name),
+                color = BridgeText,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                AboutRow(stringResource(R.string.about_version), AppVersion.NAME)
+                AboutRow(stringResource(R.string.about_developer), stringResource(R.string.about_author))
+                AboutRow(
+                    stringResource(R.string.about_callsign),
+                    stringResource(R.string.about_callsign_value),
+                )
+                AboutRow(
+                    stringResource(R.string.about_license),
+                    stringResource(R.string.about_license_value),
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    stringResource(R.string.about_license_notice),
+                    color = BridgeMuted,
+                    fontSize = 12.sp,
+                )
+                Text(
+                    licenseUrl,
+                    color = BridgeAccent,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(licenseUrl)),
+                            )
+                        }
+                    },
+                )
+                Text(
+                    stringResource(R.string.about_copyright),
+                    color = BridgeMuted,
+                    fontSize = 12.sp,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_close), color = BridgeAccent)
+            }
+        },
+        containerColor = BridgePanel,
+    )
+}
+
+@Composable
+private fun AboutRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            label,
+            color = BridgeMuted,
+            fontSize = 13.sp,
+            modifier = Modifier.width(110.dp),
+        )
+        Text(value, color = BridgeText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -663,8 +771,8 @@ private fun AntennaEditorCard(
         append(" · ")
         append(offset.ifEmpty { "0" })
         append("°")
-        if (dipole) append(dipoleSuffix)
-        if (selected) append(activeSuffix)
+        if (dipole) append(" $dipoleSuffix")
+        if (selected) append(" $activeSuffix")
     }
 
     Column(
@@ -692,7 +800,11 @@ private fun AntennaEditorCard(
                 )
             }
             Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                imageVector = if (expanded) {
+                    Icons.Default.KeyboardArrowUp
+                } else {
+                    Icons.Default.KeyboardArrowDown
+                },
                 contentDescription = if (expanded) {
                     stringResource(R.string.cd_collapse)
                 } else {

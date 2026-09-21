@@ -219,7 +219,7 @@ fun ControlScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
+                        Text(
                         text = stringResource(R.string.app_name),
                         color = BridgeText,
                         fontWeight = FontWeight.Bold,
@@ -241,9 +241,9 @@ fun ControlScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                     .then(
                         if (landscape && !onMapPage) {
                             Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
@@ -255,9 +255,9 @@ fun ControlScreen(
                     ),
             ) {
                 if (state.rotor.statusText.isNotBlank() && !onMapPage) {
-                    Text(
-                        text = state.rotor.statusText,
-                        style = MaterialTheme.typography.titleMedium,
+            Text(
+                text = state.rotor.statusText,
+                style = MaterialTheme.typography.titleMedium,
                         color = when {
                             state.rotor.hasFault -> BridgeStop
                             state.rotor.hasWarning -> BridgeAccent
@@ -520,6 +520,7 @@ private fun QuickSettingsPage(
         AntennaSelectCard(
             antennas = state.rotor.antennas,
             selected = state.rotor.selectedAntenna,
+            enabled = connected && state.rotor.azOnline,
             connected = connected,
             onSelect = onSelectAntenna,
         )
@@ -543,7 +544,7 @@ private fun QuickSettingsPage(
                         value = selectedFav?.let { formatFavoriteLabel(it, elevationEnabled) }
                             ?: if (favorites.isEmpty()) {
                                 stringResource(R.string.favorites_empty)
-                            } else {
+                } else {
                                 stringResource(R.string.favorites_select)
                             },
                         onValueChange = {},
@@ -630,7 +631,7 @@ private fun QuickSettingsPage(
         PwmSliderCard(
             title = stringResource(R.string.pwm_title_az),
             value = azSlider,
-            enabled = connected,
+                    enabled = connected,
             onValueChange = { raw ->
                 val v = raw.coerceIn(30f, 100f)
                 azSlider = v
@@ -766,26 +767,32 @@ private fun azimuthHudBottomLeft(state: AppUiState): Pair<String, String>? {
 private fun AntennaSelectCard(
     antennas: List<de.dk8de.rotorapp.rotor.AntennaSlot>,
     selected: Int,
+    enabled: Boolean,
     connected: Boolean,
     onSelect: (Int) -> Unit,
 ) {
-    Card(
+            Card(
         colors = CardDefaults.cardColors(containerColor = BridgePanel),
         border = BorderStroke(1.dp, BridgeButtonBorder),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
+                modifier = Modifier.fillMaxWidth(),
+            ) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
+                    Text(
                 stringResource(R.string.antenna_section),
                 color = BridgeText,
-                fontWeight = FontWeight.SemiBold,
-            )
-            if (!connected) {
-                Text(
+                        fontWeight = FontWeight.SemiBold,
+                    )
+            when {
+                !connected -> Text(
                     stringResource(R.string.antenna_connect_hint),
+                    color = BridgeMuted,
+                    fontSize = 13.sp,
+                )
+                !enabled -> Text(
+                    stringResource(R.string.antenna_az_required_hint),
                     color = BridgeMuted,
                     fontSize = 13.sp,
                 )
@@ -800,14 +807,14 @@ private fun AntennaSelectCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(6.dp))
-                            .background(if (isSel) BridgeAccent.copy(alpha = 0.18f) else Color.Transparent)
+                            .background(if (isSel && enabled) BridgeAccent.copy(alpha = 0.18f) else Color.Transparent)
                             .border(
                                 1.dp,
-                                if (isSel) BridgeAccent else BridgeButtonBorder,
+                                if (isSel && enabled) BridgeAccent else BridgeButtonBorder,
                                 RoundedCornerShape(6.dp),
                             )
                             .then(
-                                if (connected) {
+                                if (enabled) {
                                     Modifier.clickable { onSelect(slot) }
                                 } else {
                                     Modifier
@@ -818,12 +825,12 @@ private fun AntennaSelectCard(
                     ) {
                         Text(
                             text = label,
-                            color = if (connected) BridgeText else BridgeMuted,
+                            color = if (enabled) BridgeText else BridgeMuted,
                             fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
                             fontSize = 14.sp,
                             modifier = Modifier.weight(1f),
                         )
-                        if (isSel) {
+                        if (isSel && enabled) {
                             Text(stringResource(R.string.antenna_active), color = BridgeAccent, fontSize = 12.sp)
                         }
                     }
@@ -980,12 +987,16 @@ private fun LandscapeAxisColumn(
         ) {
             Text(title, color = BridgeAccent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Text(
+                // Abstände hier, nicht in den Strings: aapt trimmt Leerzeichen in Resources.
                 text = buildAnnotatedString {
                     append(compactIst)
+                    append(' ')
                     withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
                         append(if (offline) na else ist?.let { "%.1f°".format(it) } ?: na)
                     }
+                    append("   ")
                     append(compactSoll)
+                    append(' ')
                     withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
                         append(if (offline) na else soll?.let { "%.1f°".format(it) } ?: na)
                     }
@@ -1004,7 +1015,7 @@ private fun LandscapeAxisColumn(
         ) {
             if (azimuth) {
                 val ant = state.rotor.antennas.getOrNull(state.rotor.selectedAntenna - 1)
-                AzimuthCompass(
+            AzimuthCompass(
                     currentDeg = if (online) ist else null,
                     targetDeg = if (online) soll else null,
                     onPick = onPick,
@@ -1287,14 +1298,14 @@ private fun ElevationPage(
                 .fillMaxWidth(),
             contentAlignment = Alignment.Center,
         ) {
-            ElevationCompass(
+                ElevationCompass(
                 currentDeg = if (state.rotor.elOnline) {
                     state.rotor.elSmoothDeg ?: state.rotor.elDeg
                 } else {
                     null
                 },
                 targetDeg = if (state.rotor.elOnline) state.rotor.elSollDeg else null,
-                onPick = onElevation,
+                    onPick = onElevation,
                 enabled = canMove,
                 maxDeg = state.rotor.elMaxDeg,
                 stromBins36 = state.rotor.stromBinsEl36,
@@ -1314,7 +1325,7 @@ private fun ElevationPage(
             BridgeButton(
                 text = stringResource(R.string.action_stop),
                 onClick = onStop,
-                enabled = connected,
+                    enabled = connected,
                 tone = BridgeButtonTone.Stop,
                 compact = true,
                 modifier = Modifier.fillMaxHeight(),
@@ -1423,6 +1434,7 @@ private fun StatusCardAz(state: AppUiState) {
         Text(
             text = buildAnnotatedString {
                 append(stringResource(R.string.status_az_ist))
+                append(' ')
                 withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
@@ -1431,7 +1443,9 @@ private fun StatusCardAz(state: AppUiState) {
                         },
                     )
                 }
+                append("   ")
                 append(stringResource(R.string.status_soll))
+                append(' ')
                 withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
@@ -1442,8 +1456,8 @@ private fun StatusCardAz(state: AppUiState) {
                 }
                 when {
                     offline -> Unit
-                    state.rotor.azHoming -> append(suffixHoming)
-                    state.rotor.moving -> append(suffixMoving)
+                    state.rotor.azHoming -> append("   $suffixHoming")
+                    state.rotor.moving -> append("   $suffixMoving")
                 }
             },
             style = MaterialTheme.typography.bodyLarge,
@@ -1466,6 +1480,7 @@ private fun StatusCardEl(state: AppUiState) {
         Text(
             text = buildAnnotatedString {
                 append(stringResource(R.string.status_el_ist))
+                append(' ')
                 withStyle(SpanStyle(color = BridgeIst, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
@@ -1476,7 +1491,9 @@ private fun StatusCardEl(state: AppUiState) {
                         },
                     )
                 }
+                append("   ")
                 append(stringResource(R.string.status_soll))
+                append(' ')
                 withStyle(SpanStyle(color = BridgeSoll, fontWeight = FontWeight.SemiBold)) {
                     append(
                         when {
@@ -1485,7 +1502,7 @@ private fun StatusCardEl(state: AppUiState) {
                         },
                     )
                 }
-                if (!offline && state.rotor.elHoming) append(suffixHoming)
+                if (!offline && state.rotor.elHoming) append("   $suffixHoming")
             },
             style = MaterialTheme.typography.bodyLarge,
             color = BridgeText,

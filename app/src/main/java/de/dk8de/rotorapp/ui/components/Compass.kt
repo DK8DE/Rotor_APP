@@ -7,7 +7,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -37,6 +40,8 @@ import de.dk8de.rotorapp.ui.theme.BridgeTick
 import de.dk8de.rotorapp.ui.theme.heatmapColor
 import de.dk8de.rotorapp.ui.theme.HeatmapScale
 import de.dk8de.rotorapp.ui.theme.stromBinHeatmapColor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -48,11 +53,17 @@ private object WindroseCache {
     @Volatile
     private var cached: ImageBitmap? = null
 
+    /** Schon dekodiert? Ohne Blockieren, für den ersten Frame. */
+    fun peek(): ImageBitmap? = cached
+
     fun get(context: Context): ImageBitmap? {
         cached?.let { return it }
         synchronized(this) {
             cached?.let { return it }
-            val bmp = BitmapFactory.decodeResource(context.resources, R.drawable.windrose)
+            // inScaled=false: sonst rechnet BitmapFactory die dichtelose Ressource
+            // auf die Display-Dichte hoch (≈3× Kantenlänge, ~9× Speicher/Zeit).
+            val opts = BitmapFactory.Options().apply { inScaled = false }
+            val bmp = BitmapFactory.decodeResource(context.resources, R.drawable.windrose, opts)
                 ?.asImageBitmap()
             cached = bmp
             return bmp
@@ -100,7 +111,12 @@ fun AzimuthCompass(
     hudBottomLeft: Pair<String, String>? = null,
 ) {
     val context = LocalContext.current
-    val windrose = remember(context) { WindroseCache.get(context) }
+    // Erster Frame darf nicht auf das Dekodieren warten — Rose kommt nach.
+    val windrose by produceState(WindroseCache.peek(), context) {
+        if (value == null) {
+            value = withContext(Dispatchers.Default) { WindroseCache.get(context) }
+        }
+    }
     val labelN = stringResource(R.string.compass_n)
     val labelS = stringResource(R.string.compass_s)
     val labelE = stringResource(R.string.compass_e)

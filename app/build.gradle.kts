@@ -35,7 +35,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8: unbenutzten Code/Ressourcen entfernen — kleinere APK, schnellerer Start
+            isMinifyEnabled = true
+            isShrinkResources = true
             // Sideload / GitHub-Release ohne eigenen Keystore
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(

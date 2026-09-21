@@ -48,10 +48,12 @@ object WifiNetworkBinder {
     }
 
     /**
-     * Wi‑Fi-Network finden; wartet kurz per [registerNetworkCallback]     * (meldet auch schon bestehende Netze).
+     * Wi‑Fi-Network finden. Nur wenn keines da ist, kurz per Callback warten —
+     * vermeidet ständiges registerNetworkCallback bei jedem Reconnect.
      */
-    suspend fun awaitWifiNetwork(context: Context, timeoutMs: Long = 3_000L): Network? {
+    suspend fun awaitWifiNetwork(context: Context, timeoutMs: Long = 1_500L): Network? {
         findWifiNetwork(context)?.let { return it }
+        if (timeoutMs <= 0L) return null
 
         val cm = connectivity(context)
         val mainHandler = Handler(Looper.getMainLooper())
@@ -74,13 +76,11 @@ object WifiNetworkBinder {
                     runCatching { cm.unregisterNetworkCallback(cb) }
                 }
                 try {
-                    // Callback muss auf Looper-Thread registriert werden
                     cm.registerNetworkCallback(request, cb, mainHandler)
                 } catch (_: Exception) {
                     if (cont.isActive) cont.resume(null)
                     return@suspendCancellableCoroutine
                 }
-                // Race: Netz war schon da, onAvailable kommt ggf. sofort — zusätzlich prüfen
                 mainHandler.post {
                     if (!cont.isActive) return@post
                     findWifiNetwork(context)?.let { wifi ->

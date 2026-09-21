@@ -37,6 +37,9 @@ class RotorClient(
 
     val isConnected: Boolean get() = link.isConnected
 
+    /** Zeit seit dem letzten empfangenen Byte (0 = gerade verbunden/getrennt). */
+    val linkSilenceMs: Long get() = link.silenceMs
+
     suspend fun sendRaw(frame: String): List<Telegram> {
         link.send(frame)
         return readTelegrams(400)
@@ -270,9 +273,9 @@ class RotorClient(
         return ack != null && ack.cmd.startsWith("ACK")
     }
 
-    /** Aktuelle Antenne 1–3 vom Display-Controller (GETASELECT). */
-    suspend fun getAntennaSelect(controllerId: Int, timeoutMs: Long = 800): Int? {
-        val frame = Rs485Protocol.build(masterId, controllerId, "GETASELECT", "0")
+    /** Aktuelle Antenne 1–3 vom AZ-Rotor (GETASELECT → NVS). */
+    suspend fun getAntennaSelect(azDst: Int, timeoutMs: Long = 800): Int? {
+        val frame = Rs485Protocol.build(masterId, azDst, "GETASELECT", "0")
         val ack = sendAndAwait(frame, "ACK_GETASELECT", "NAK_GETASELECT", timeoutMs = timeoutMs)
             ?: return null
         if (ack.cmd.startsWith("NAK")) return null
@@ -280,13 +283,12 @@ class RotorClient(
         return n.coerceIn(1, 3)
     }
 
-    /** Broadcast SETASELECT an DST 255 (kein ACK). */
-    suspend fun broadcastAntennaSelect(slot: Int) {
+    /** Antenne 1–3 am AZ-Rotor speichern (SETASELECT an AZ-Slave). */
+    suspend fun setAntennaSelect(azDst: Int, slot: Int, timeoutMs: Long = 800): Boolean {
         val n = antSlot(slot)
-        val frame = Rs485Protocol.build(masterId, Rs485Protocol.BROADCAST_DST, "SETASELECT", n.toString())
-        link.send(frame)
-        // Kurz drainen, damit Echo den Sniffer erreicht
-        readTelegrams(80)
+        val frame = Rs485Protocol.build(masterId, azDst, "SETASELECT", n.toString())
+        val ack = sendAndAwait(frame, "ACK_SETASELECT", "NAK_SETASELECT", timeoutMs = timeoutMs)
+        return ack != null && ack.cmd.startsWith("ACK")
     }
 
     /**
@@ -455,7 +457,8 @@ class RotorClient(
             u.startsWith("ACK_GETWARN") ||
             u.startsWith("ACK_GETERR") ||
             u.startsWith("ACK_ERR") ||
-            u.startsWith("ACK_GETASELECT")
+            u.startsWith("ACK_GETASELECT") ||
+            u.startsWith("ACK_SETASELECT")
     }
 
     private suspend fun readTelegrams(waitMs: Long): List<Telegram> {
