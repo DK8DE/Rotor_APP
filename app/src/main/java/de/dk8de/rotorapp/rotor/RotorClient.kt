@@ -146,6 +146,15 @@ class RotorClient(
         return RotorCodes.parseWarnIds(ack.params)
     }
 
+    /** Gelatchten Fehlercode abfragen (`0` = kein Fehler). */
+    suspend fun getErr(dst: Int, timeoutMs: Long = 800): Int? {
+        val frame = Rs485Protocol.build(masterId, dst, "GETERR", "0")
+        val ack = sendAndAwait(frame, "ACK_GETERR", "NAK_GETERR", timeoutMs = timeoutMs)
+            ?: return null
+        if (ack.cmd.startsWith("NAK")) return null
+        return Rs485Protocol.parseDegree(ack.params)?.toInt()
+    }
+
     /** Umgebungstemperatur °C (GETTEMPA). */
     suspend fun getTempA(dst: Int, timeoutMs: Long = 800): Double? {
         val frame = Rs485Protocol.build(masterId, dst, "GETTEMPA", "0")

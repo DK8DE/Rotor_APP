@@ -580,6 +580,9 @@ class RotorRepository(context: android.content.Context) {
             ) {
                 runCatching { fetchStartupPositionsLocked() }
             }
+            // Fehlerstand immer holen — auch bei Skip-Bootstrap, sonst bleibt ein
+            // vor dem Connect gelatchter Fehler unsichtbar.
+            runCatching { refreshErrorsLocked() }
             if (!skipHeavyBootstrap) {
                 lastBootstrapMs = nowBoot
                 runCatching { queryRotorTypesLocked() }
@@ -1421,8 +1424,8 @@ class RotorRepository(context: android.content.Context) {
 
     private suspend fun pollPositionsLocked(expectedPeriodS: Float) {
             if (_state.value.busPassive) return
-            if (_state.value.homing) {
-                pollReferenceLocked()
+        if (_state.value.homing) {
+            pollReferenceLocked()
                 return
             }
             val before = _state.value
@@ -1477,7 +1480,7 @@ class RotorRepository(context: android.content.Context) {
                     }.getOrNull()
                     if (el != null) elSampleMs = SystemClock.elapsedRealtime()
                 }
-            } else {
+        } else {
                 if (pollAzPrimary) {
                     az = runCatching {
                         client.getPosDg(profile.slaveAz, timeoutMs = posTo)
@@ -1515,7 +1518,7 @@ class RotorRepository(context: android.content.Context) {
             val elQueried = pollElPrimary || pollElKeepalive
 
             if (azQueried) {
-                if (az != null) {
+        if (az != null) {
                     azFailStreak = 0
                     azOnline = true
                     azDeg = az
@@ -1589,8 +1592,8 @@ class RotorRepository(context: android.content.Context) {
                     expectedPeriodS = expectedPeriodS,
                 )
                 azSmooth = azSmoother.current()?.toDouble()
-            }
-            if (profile.enableEl && el != null) {
+        }
+        if (profile.enableEl && el != null) {
                 elSmoother.updateSample(
                     el.toFloat(),
                     nowMs = elSampleMs,
@@ -1600,7 +1603,7 @@ class RotorRepository(context: android.content.Context) {
             }
 
             _state.value = cur.copy(
-                connected = true,
+            connected = true,
                 azDeg = azDeg,
                 elDeg = if (profile.enableEl) elDeg else null,
                 azSmoothDeg = azSmooth,
@@ -1615,7 +1618,7 @@ class RotorRepository(context: android.content.Context) {
                 elTarget = elTarget,
                 azCompassTarget = azCompass,
                 elCompassTarget = elCompass,
-                moving = moving,
+            moving = moving,
                 statusText = statusTextFor(
                     azOnline,
                     elOnline,
@@ -1694,6 +1697,7 @@ class RotorRepository(context: android.content.Context) {
                 }
                 // Antennenauswahl/-werte vom AZ nachziehen (war offline beim Connect)
                 runCatching { refreshAntennasLocked() }
+                runCatching { refreshErrorsLocked(only = RotorAxis.AZ) }
             }
         }
 
@@ -1742,6 +1746,7 @@ class RotorRepository(context: android.content.Context) {
                         elSmoothDeg = elSmoother.current()?.toDouble(),
                     )
                 }
+                runCatching { refreshErrorsLocked(only = RotorAxis.EL) }
             }
         }
     }
@@ -1754,7 +1759,7 @@ class RotorRepository(context: android.content.Context) {
             ioMutex.withLock {
                 if (_state.value.busPassive) return@withLock
                 client.clearAbortAwait()
-                pollReferenceLocked()
+        pollReferenceLocked()
             }
             return
         }
@@ -1929,12 +1934,12 @@ class RotorRepository(context: android.content.Context) {
                 val nowMs = SystemClock.elapsedRealtime()
                 azSmoother.setDynamic(true)
                 azSmoother.updateSample(az.toFloat(), nowMs = nowMs, expectedPeriodS = 0.25f)
-                _state.value = _state.value.copy(
+            _state.value = _state.value.copy(
                     azOnline = true,
                     azDeg = az,
                     azSmoothDeg = azSmoother.current()?.toDouble(),
-                    moving = true,
-                )
+                moving = true,
+            )
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
@@ -2109,12 +2114,12 @@ class RotorRepository(context: android.content.Context) {
                 val nowMs = SystemClock.elapsedRealtime()
                 elSmoother.setDynamic(true)
                 elSmoother.updateSample(el.toFloat(), nowMs = nowMs, expectedPeriodS = 0.25f)
-                _state.value = _state.value.copy(
+            _state.value = _state.value.copy(
                     elOnline = true,
                     elDeg = el,
                     elSmoothDeg = elSmoother.current()?.toDouble(),
-                    moving = true,
-                )
+                moving = true,
+            )
             }
         } else if (!client.isAwaitAborted) {
             _state.value = _state.value.copy(
@@ -2159,7 +2164,7 @@ class RotorRepository(context: android.content.Context) {
                 RotorAxis.EL -> _state.value.copy(pwmEl = p, lastLog = "SETPWM EL $p%")
             }
         } else {
-        _state.value = _state.value.copy(
+            _state.value = _state.value.copy(
                 lastLog = str(R.string.status_setpwm_failed),
                 statusText = str(R.string.status_setpwm_failed),
             )
@@ -2421,6 +2426,48 @@ class RotorRepository(context: android.content.Context) {
         )
     }
 
+    /**
+     * GETERR je Online-Achse — ein Fehler, der vor dem Connect aufgetreten ist,
+     * kommt sonst nie an: Der ERR-Broadcast war lange vor dem Verbinden.
+     *
+     * @param only nur diese Achse fragen (Offline→Online-Übergang), null = beide.
+     */
+    private suspend fun refreshErrorsLocked(only: RotorAxis? = null) {
+        val s = _state.value
+        val azE = if (s.azOnline && only != RotorAxis.EL) {
+            runCatching { client.getErr(profile.slaveAz) }.getOrNull()
+        } else {
+            null
+        }
+        val elE = if (profile.enableEl && s.elOnline && only != RotorAxis.AZ) {
+            runCatching { client.getErr(profile.slaveEl) }.getOrNull()
+        } else {
+            null
+        }
+        if (azE == null && elE == null) return
+        val next = _state.value.copy(
+            azErrorCode = azE ?: _state.value.azErrorCode,
+            elErrorCode = elE ?: _state.value.elErrorCode,
+        )
+        _state.value = next.copy(
+            statusText = statusTextFor(
+                next.azOnline,
+                next.elOnline,
+                next.azReferenced,
+                next.elReferenced,
+                next,
+            ),
+            lastLog = buildString {
+                append("GETERR AZ=")
+                append(azE?.toString() ?: "?")
+                if (profile.enableEl) {
+                    append(" EL=")
+                    append(elE?.toString() ?: "?")
+                }
+            },
+        )
+    }
+
     /** Direkt nach GETREF: Ist-Winkel holen, damit die Nadel nicht erst nach Temp/Wind kommt. */
     private suspend fun fetchStartupPositionsLocked() {
         val cur = _state.value
@@ -2467,7 +2514,7 @@ class RotorRepository(context: android.content.Context) {
                     profile.slaveAz,
                     timeoutMs = if (before.azOnline || azFailStreak == 0) {
                         POS_TIMEOUT_ONLINE_MS
-                    } else {
+        } else {
                         POS_TIMEOUT_OFFLINE_MS
                     },
                 )
@@ -2633,7 +2680,7 @@ class RotorRepository(context: android.content.Context) {
             } else if (azHomingActive || !azAsked) {
                 // Nicht gefragt → kein Fehlversuch, Online-Status bleibt wie er war.
                 azOnlineOut = true
-            } else {
+        } else {
                 azFailStreak++
                 if (azFailStreak >= FAIL_STREAK_OFFLINE) {
                     azOnlineOut = false
