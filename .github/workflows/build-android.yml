@@ -62,8 +62,39 @@ jobs:
       - name: Gradle Wrapper ausführbar
         run: chmod +x gradlew
 
+      # Ohne festen Keystore würfelt Gradle pro Lauf einen Debug-Key —
+      # dann verweigert Android das Update und nur Deinstallieren hilft.
+      - name: Keystore aus Secret entpacken
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ROTOR_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret ROTOR_KEYSTORE_B64 fehlt — Release würde unsignierbar sein."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/rotor-release.jks"
+          ls -l "$RUNNER_TEMP/rotor-release.jks"
+
       - name: APK bauen (release)
+        env:
+          ROTOR_KEYSTORE_FILE: ${{ runner.temp }}/rotor-release.jks
+          ROTOR_KEYSTORE_PASSWORD: ${{ secrets.ROTOR_KEYSTORE_PASSWORD }}
+          ROTOR_KEY_ALIAS: ${{ secrets.ROTOR_KEY_ALIAS }}
+          ROTOR_KEY_PASSWORD: ${{ secrets.ROTOR_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Signatur prüfen
+        shell: bash
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n1)
+          OUT=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk)
+          echo "$OUT"
+          # Debug-Zertifikat bedeutet: Secrets griffen nicht → Update wäre wieder kaputt.
+          if echo "$OUT" | grep -q "CN=Android Debug"; then
+            echo "::error::APK ist mit Debug-Key signiert — Release abgebrochen."
+            exit 1
+          fi
 
       - name: APK umbenennen
         id: apk
@@ -94,6 +125,11 @@ jobs:
           body: |
             ## Rotor App ${{ steps.ver.outputs.version }}
 
-            Installierbare Release-APK (mit Debug-Keystore signiert, Sideload).
+            Installierbare Release-APK (Sideload, fester DK8DE-Signaturschlüssel).
 
             Datei: `RotorApp-${{ steps.ver.outputs.tag }}.apk`
+
+            Update über eine bereits installierte 1.2.2 oder älter ist nicht
+            möglich — diese Releases hatten pro Build einen anderen Schlüssel.
+            Einmalig alte App deinstallieren, danach lässt sich jede neue
+            Version direkt drüber installieren.

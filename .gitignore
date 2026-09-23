@@ -13,3 +13,8 @@
 app/build/
 **/build/
 .kotlin/
+# Signierung: Keystore und Passwoerter bleiben ausserhalb des Repos
+/keystore.properties
+*.jks
+*.keystore
+*.p12

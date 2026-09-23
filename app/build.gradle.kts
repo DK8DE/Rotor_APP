@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -20,6 +22,43 @@ fun readAppVersion(): Pair<String, Int> {
 
 val (appVersionName, appVersionCode) = readAppVersion()
 
+/**
+ * Release-Signierung: CI liefert die Werte per Umgebungsvariable, lokal kommen sie
+ * aus `keystore.properties` (nicht im Repo). Ohne Keystore bleibt `null` — dann
+ * signiert Gradle mit Debug-Key, und das APK taugt nur zum Testen, nicht als Update.
+ */
+data class ReleaseSigning(
+    val storeFile: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun releaseSigning(): ReleaseSigning? {
+    val props = Properties()
+    rootProject.file("keystore.properties")
+        .takeIf { it.exists() }
+        ?.inputStream()
+        ?.use { props.load(it) }
+
+    fun value(env: String, prop: String): String? {
+        val v: String? = System.getenv(env) ?: props.getProperty(prop)
+        return if (v.isNullOrBlank()) null else v
+    }
+
+    val path = value("ROTOR_KEYSTORE_FILE", "storeFile") ?: return null
+    val store = file(path).takeIf { it.exists() } ?: rootProject.file(path)
+    if (!store.exists()) return null
+    return ReleaseSigning(
+        storeFile = store,
+        storePassword = value("ROTOR_KEYSTORE_PASSWORD", "storePassword") ?: return null,
+        keyAlias = value("ROTOR_KEY_ALIAS", "keyAlias") ?: return null,
+        keyPassword = value("ROTOR_KEY_PASSWORD", "keyPassword") ?: return null,
+    )
+}
+
+val signing = releaseSigning()
+
 android {
     namespace = "de.dk8de.rotorapp"
     compileSdk = 35
@@ -33,13 +72,31 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (signing != null) {
+            create("release") {
+                storeFile = signing.storeFile
+                storePassword = signing.storePassword
+                keyAlias = signing.keyAlias
+                keyPassword = signing.keyPassword
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Eigene App-ID: Test-Build und Release-APK dürfen parallel installiert sein
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             // R8: unbenutzten Code/Ressourcen entfernen — kleinere APK, schnellerer Start
             isMinifyEnabled = true
             isShrinkResources = true
-            // Sideload / GitHub-Release ohne eigenen Keystore
-            signingConfig = signingConfigs.getByName("debug")
+            // Fester Sideload-Schlüssel: nur damit lässt sich ein Release updaten,
+            // statt es deinstallieren zu müssen.
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
