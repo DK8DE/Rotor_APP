@@ -1,6 +1,7 @@
 package de.dk8de.rotorapp.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.dk8de.rotorapp.AppLanguage
@@ -14,6 +15,7 @@ import de.dk8de.rotorapp.rotor.RotorLiveState
 import de.dk8de.rotorapp.rotor.RotorRepository
 import de.dk8de.rotorapp.update.UpdateChecker
 import de.dk8de.rotorapp.update.UpdateInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +26,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Ergebnis von Export/Import der Einstellungen. */
+enum class BackupState {
+    Idle,
+    Exported,
+    Imported,
+    Failed,
+}
 
 /** Ergebnis der manuellen Update-Prüfung im Info-Dialog. */
 enum class UpdateCheckState {
@@ -107,6 +118,9 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Automatische Prüfung nur einmal pro App-Start. */
     private var autoUpdateChecked = false
+
+    private val _backupState = MutableStateFlow(BackupState.Idle)
+    val backupState: StateFlow<BackupState> = _backupState
 
     init {
         // Splash sofort beenden, sobald Profile da sind — nicht auf TCP warten
@@ -195,6 +209,47 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
             }
             result.getOrNull()?.let { _updateInfo.value = it }
         }
+    }
+
+    /** Alle Einstellungen in die vom Nutzer gewählte Datei schreiben. */
+    fun exportSettings(target: Uri) {
+        viewModelScope.launch {
+            val ok = runCatching {
+                val json = store.exportJson()
+                withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver
+                        .openOutputStream(target, "wt")
+                        ?.use { it.write(json.toByteArray()) }
+                        ?: error("kein Stream")
+                }
+            }.isSuccess
+            _backupState.value = if (ok) BackupState.Exported else BackupState.Failed
+        }
+    }
+
+    /** Sicherung einspielen; Verbindung zieht über die Profil-Signatur automatisch nach. */
+    fun importSettings(source: Uri) {
+        viewModelScope.launch {
+            val text = runCatching {
+                withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver
+                        .openInputStream(source)
+                        ?.use { it.readBytes().decodeToString() }
+                        ?: error("kein Stream")
+                }
+            }.getOrNull()
+            val ok = text != null && runCatching { store.importJson(text) }.getOrDefault(false)
+            if (ok) {
+                val lang = runCatching { store.uiDisplayPrefs.first().appLanguage }
+                    .getOrDefault(AppLanguage.SYSTEM)
+                AppLanguage.apply(lang)
+            }
+            _backupState.value = if (ok) BackupState.Imported else BackupState.Failed
+        }
+    }
+
+    fun clearBackupState() {
+        _backupState.value = BackupState.Idle
     }
 
     fun dismissUpdate() {

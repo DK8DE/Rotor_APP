@@ -2,6 +2,8 @@ package de.dk8de.rotorapp.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.dk8de.rotorapp.data.RotorProfile
+import de.dk8de.rotorapp.data.SettingsBackup
 import de.dk8de.rotorapp.rotor.AntennaSlot
 import de.dk8de.rotorapp.ui.components.BridgeButton
 import de.dk8de.rotorapp.ui.theme.BridgeAccent
@@ -69,6 +72,7 @@ import de.dk8de.rotorapp.ui.theme.BridgeBg
 import de.dk8de.rotorapp.ui.theme.BridgeIst
 import de.dk8de.rotorapp.ui.theme.BridgeMuted
 import de.dk8de.rotorapp.ui.theme.BridgePanel
+import de.dk8de.rotorapp.ui.theme.BridgeStop
 import de.dk8de.rotorapp.ui.theme.BridgeText
 import java.util.UUID
 
@@ -94,9 +98,22 @@ fun ProfilesScreen(
     onAppLanguageChange: (String) -> Unit,
     onCheckUpdate: () -> Unit,
     updateCheckState: UpdateCheckState,
+    onExportSettings: (Uri) -> Unit,
+    onImportSettings: (Uri) -> Unit,
+    onBackupStateSeen: () -> Unit,
+    backupState: BackupState,
 ) {
     var editing by remember { mutableStateOf<RotorProfile?>(null) }
     var showAbout by remember { mutableStateOf(false) }
+    var confirmImport by remember { mutableStateOf(false) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let(onExportSettings) }
+    // Manche Dateimanager melden JSON nicht mit korrektem MIME-Typ — daher alles zulassen.
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(onImportSettings) }
 
     LaunchedEffect(state.rotor.connected) {
         if (state.rotor.connected) onRefreshAntennas()
@@ -339,6 +356,58 @@ fun ProfilesScreen(
                 )
             }
 
+            // —— Sicherung ——
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    stringResource(R.string.section_backup),
+                    color = BridgeAccent,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+                Text(
+                    stringResource(R.string.backup_hint),
+                    color = BridgeMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                ) {
+                    BridgeButton(
+                        text = stringResource(R.string.btn_export),
+                        onClick = {
+                            onBackupStateSeen()
+                            exportLauncher.launch(SettingsBackup.fileName())
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    BridgeButton(
+                        text = stringResource(R.string.btn_import),
+                        onClick = {
+                            onBackupStateSeen()
+                            confirmImport = true
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                val backupMsg = when (backupState) {
+                    BackupState.Exported -> stringResource(R.string.backup_exported)
+                    BackupState.Imported -> stringResource(R.string.backup_imported)
+                    BackupState.Failed -> stringResource(R.string.backup_failed)
+                    BackupState.Idle -> null
+                }
+                backupMsg?.let {
+                    Text(
+                        it,
+                        color = if (backupState == BackupState.Failed) BridgeStop else BridgeMuted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp),
+                    )
+                }
+            }
+
             // —— Info / Version ——
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -357,6 +426,30 @@ fun ProfilesScreen(
 
             // —— Ende Einstellungen ——
         }
+    }
+
+    if (confirmImport) {
+        AlertDialog(
+            onDismissRequest = { confirmImport = false },
+            title = { Text(stringResource(R.string.backup_import_title), color = BridgeText) },
+            text = { Text(stringResource(R.string.backup_import_text), color = BridgeMuted) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmImport = false
+                        importLauncher.launch(arrayOf("*/*"))
+                    },
+                ) {
+                    Text(stringResource(R.string.backup_import_confirm), color = BridgeAccent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmImport = false }) {
+                    Text(stringResource(R.string.action_cancel), color = BridgeMuted)
+                }
+            },
+            containerColor = BridgePanel,
+        )
     }
 
     if (showAbout) {

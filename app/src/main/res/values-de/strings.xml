@@ -154,6 +154,16 @@
     <string name="about_license_notice">Lizenziert unter der Apache License, Version 2.0</string>
     <string name="action_close">Schließen</string>
     <string name="btn_check_update">NACH UPDATE SUCHEN</string>
+    <string name="section_backup">Sicherung</string>
+    <string name="backup_hint">Profile, Favoriten und Anzeige-Einstellungen als Datei sichern — vor Handywechsel oder Neuinstallation.</string>
+    <string name="btn_export">EXPORTIEREN</string>
+    <string name="btn_import">IMPORTIEREN</string>
+    <string name="backup_exported">Einstellungen gesichert.</string>
+    <string name="backup_imported">Einstellungen wiederhergestellt.</string>
+    <string name="backup_failed">Fehlgeschlagen — Datei nicht lesbar oder keine Rotor-Sicherung.</string>
+    <string name="backup_import_title">Einstellungen ersetzen?</string>
+    <string name="backup_import_text">Die Sicherung überschreibt alle Profile, Favoriten und Anzeige-Einstellungen auf diesem Gerät.</string>
+    <string name="backup_import_confirm">Datei wählen</string>
     <string name="update_title">Neue Version verfügbar</string>
     <string name="update_message">Version %1$s steht auf GitHub bereit.\nInstalliert: %2$s</string>
     <string name="update_download">Herunterladen</string>

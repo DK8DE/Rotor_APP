@@ -126,6 +126,11 @@ class MainActivity : AppCompatActivity() {
                             onCheckUpdate = vm::checkForUpdateNow,
                             updateCheckState = vm.updateCheckState
                                 .collectAsStateWithLifecycle().value,
+                            onExportSettings = vm::exportSettings,
+                            onImportSettings = vm::importSettings,
+                            onBackupStateSeen = vm::clearBackupState,
+                            backupState = vm.backupState
+                                .collectAsStateWithLifecycle().value,
                         )
                     }
                 }

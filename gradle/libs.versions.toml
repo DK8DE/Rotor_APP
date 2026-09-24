@@ -11,6 +11,7 @@ navigationCompose = "2.8.5"
 datastore = "1.1.1"
 coroutines = "1.9.0"
 junit = "4.13.2"
+json = "20250107"
 androidxJunit = "1.2.1"
 espressoCore = "3.6.1"
 
@@ -34,6 +35,8 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+# Im Unit-Test ist org.json nur eine Attrappe — echte Implementierung nachziehen.
+json = { group = "org.json", name = "json", version.ref = "json" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 

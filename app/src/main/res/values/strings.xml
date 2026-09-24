@@ -162,6 +162,16 @@
     <string name="about_license_notice">Licensed under the Apache License, Version 2.0</string>
     <string name="action_close">Close</string>
     <string name="btn_check_update">CHECK FOR UPDATE</string>
+    <string name="section_backup">Backup</string>
+    <string name="backup_hint">Save profiles, favourites and display settings to a file — before switching phones or reinstalling.</string>
+    <string name="btn_export">EXPORT</string>
+    <string name="btn_import">IMPORT</string>
+    <string name="backup_exported">Settings saved.</string>
+    <string name="backup_imported">Settings restored.</string>
+    <string name="backup_failed">Failed — file unreadable or not a rotator backup.</string>
+    <string name="backup_import_title">Replace settings?</string>
+    <string name="backup_import_text">The backup overwrites all profiles, favourites and display settings on this device.</string>
+    <string name="backup_import_confirm">Choose file</string>
     <string name="update_title">Update available</string>
     <string name="update_message">Version %1$s is available on GitHub.\nInstalled: %2$s</string>
     <string name="update_download">Download</string>

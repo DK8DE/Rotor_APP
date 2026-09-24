@@ -1,6 +1,7 @@
 package de.dk8de.rotorapp.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -9,9 +10,11 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import de.dk8de.rotorapp.AppLanguage
+import de.dk8de.rotorapp.AppVersion
 import de.dk8de.rotorapp.geo.GeoUtils
 import de.dk8de.rotorapp.ui.theme.HeatmapScale
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -89,23 +92,25 @@ class ProfileStore(private val context: Context) {
     }
 
     val uiDisplayPrefs: Flow<UiDisplayPrefs> = context.profileDataStore.data.map { prefs ->
-        UiDisplayPrefs(
-            showBeamOverlay = prefs[keyShowBeamOverlay] ?: true,
-            showStromRing = prefs[keyShowStromRing] ?: false,
-            showDwellRing = prefs[keyShowDwellRing] ?: false,
-            dwellFullMinutes = (prefs[keyDwellFullMinutes] ?: 5f).coerceIn(0.5f, 120f),
-            dwellSectors = (prefs[keyDwellSectors] ?: 20).coerceIn(10, 100),
-            heatmapCustom = prefs[keyHeatmapCustom] ?: false,
-            heatmapThrBlue = (prefs[keyHeatmapThrBlue] ?: 0).coerceIn(0, 65535),
-            heatmapNormMin = (prefs[keyHeatmapNormMin] ?: 0).coerceIn(0, 65535),
-            heatmapNormMax = (prefs[keyHeatmapNormMax] ?: 0).coerceIn(0, 65535),
-            heatmapThrRed = (prefs[keyHeatmapThrRed] ?: 0).coerceIn(0, 65535),
-            locationLat = prefs[keyLocationLat] ?: GeoUtils.DEFAULT_LAT,
-            locationLon = prefs[keyLocationLon] ?: GeoUtils.DEFAULT_LON,
-            locationLocator = prefs[keyLocationLocator] ?: "",
-            appLanguage = prefs[keyAppLanguage] ?: AppLanguage.SYSTEM,
-        )
+        readDisplayPrefs(prefs)
     }
+
+    private fun readDisplayPrefs(prefs: Preferences) = UiDisplayPrefs(
+        showBeamOverlay = prefs[keyShowBeamOverlay] ?: true,
+        showStromRing = prefs[keyShowStromRing] ?: false,
+        showDwellRing = prefs[keyShowDwellRing] ?: false,
+        dwellFullMinutes = (prefs[keyDwellFullMinutes] ?: 5f).coerceIn(0.5f, 120f),
+        dwellSectors = (prefs[keyDwellSectors] ?: 20).coerceIn(10, 100),
+        heatmapCustom = prefs[keyHeatmapCustom] ?: false,
+        heatmapThrBlue = (prefs[keyHeatmapThrBlue] ?: 0).coerceIn(0, 65535),
+        heatmapNormMin = (prefs[keyHeatmapNormMin] ?: 0).coerceIn(0, 65535),
+        heatmapNormMax = (prefs[keyHeatmapNormMax] ?: 0).coerceIn(0, 65535),
+        heatmapThrRed = (prefs[keyHeatmapThrRed] ?: 0).coerceIn(0, 65535),
+        locationLat = prefs[keyLocationLat] ?: GeoUtils.DEFAULT_LAT,
+        locationLon = prefs[keyLocationLon] ?: GeoUtils.DEFAULT_LON,
+        locationLocator = prefs[keyLocationLocator] ?: "",
+        appLanguage = prefs[keyAppLanguage] ?: AppLanguage.SYSTEM,
+    )
 
     /** Öffnungswinkel-Overlay im AZ-Kompass (Standard: an). */
     val showBeamOverlay: Flow<Boolean> = uiDisplayPrefs.map { it.showBeamOverlay }
@@ -242,7 +247,54 @@ class ProfileStore(private val context: Context) {
         }
     }
 
+    /** Komplette Sicherung als JSON (Profile, Favoriten, Anzeige, Sprache). */
+    suspend fun exportJson(): String {
+        val prefs = context.profileDataStore.data.first()
+        return SettingsBackup.build(
+            content = SettingsBackup.Content(
+                profiles = decodeProfiles(prefs[keyProfiles]),
+                activeProfileId = prefs[keyActiveId].orEmpty(),
+                favorites = decodeFavorites(prefs[keyFavorites]),
+                display = readDisplayPrefs(prefs),
+            ),
+            appVersion = AppVersion.NAME,
+        )
+    }
+
+    /**
+     * Sicherung einspielen — ersetzt Profile, Favoriten und Anzeige komplett.
+     * @return false bei fremder/kaputter Datei; der Bestand bleibt dann unberührt.
+     */
+    suspend fun importJson(text: String): Boolean {
+        val content = SettingsBackup.parse(text) ?: return false
+        val display = content.display
+
+        context.profileDataStore.edit { prefs ->
+            prefs[keyProfiles] = encodeProfiles(content.profiles)
+            prefs[keyActiveId] = content.activeProfileId
+            prefs[keyFavorites] = encodeFavorites(content.favorites)
+            if (display != null) {
+                prefs[keyShowBeamOverlay] = display.showBeamOverlay
+                prefs[keyShowStromRing] = display.showStromRing
+                prefs[keyShowDwellRing] = display.showDwellRing
+                prefs[keyDwellFullMinutes] = display.dwellFullMinutes
+                prefs[keyDwellSectors] = display.dwellSectors
+                prefs[keyHeatmapCustom] = display.heatmapCustom
+                prefs[keyHeatmapThrBlue] = display.heatmapThrBlue
+                prefs[keyHeatmapNormMin] = display.heatmapNormMin
+                prefs[keyHeatmapNormMax] = display.heatmapNormMax
+                prefs[keyHeatmapThrRed] = display.heatmapThrRed
+                prefs[keyLocationLat] = display.locationLat
+                prefs[keyLocationLon] = display.locationLon
+                prefs[keyLocationLocator] = display.locationLocator
+                prefs[keyAppLanguage] = display.appLanguage
+            }
+        }
+        return true
+    }
+
     companion object {
+
         fun defaultProfiles(): List<RotorProfile> = listOf(
             RotorProfile(name = "Standard", host = "192.168.0.246", port = 8886)
         )
