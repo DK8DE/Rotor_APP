@@ -1,21 +1,25 @@
 package de.dk8de.rotorapp
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -28,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import de.dk8de.rotorapp.ui.ControlScreen
 import de.dk8de.rotorapp.ui.ProfilesScreen
 import de.dk8de.rotorapp.ui.RotorViewModel
+import de.dk8de.rotorapp.ui.UpdateDownload
 import de.dk8de.rotorapp.ui.theme.BridgeAccent
 import de.dk8de.rotorapp.ui.theme.BridgeMuted
 import de.dk8de.rotorapp.ui.theme.BridgePanel
@@ -54,7 +59,6 @@ class MainActivity : AppCompatActivity() {
                 val update by vm.updateInfo.collectAsStateWithLifecycle()
                 val nav = rememberNavController()
                 val lifecycleOwner = LocalLifecycleOwner.current
-                val context = LocalContext.current
 
                 LaunchedEffect(startupReady) {
                     if (startupReady) keepSplash.set(false)
@@ -138,14 +142,9 @@ class MainActivity : AppCompatActivity() {
                 update?.let { info ->
                     UpdateDialog(
                         version = info.version,
-                        onDownload = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl)),
-                                )
-                            }
-                            vm.dismissUpdate()
-                        },
+                        download = vm.updateDownload.collectAsStateWithLifecycle().value,
+                        onDownload = vm::downloadUpdate,
+                        onGrantPermission = vm::openInstallPermission,
                         onDismiss = vm::dismissUpdate,
                     )
                 }
@@ -157,26 +156,84 @@ class MainActivity : AppCompatActivity() {
 @Composable
 private fun UpdateDialog(
     version: String,
+    download: UpdateDownload,
     onDownload: () -> Unit,
+    onGrantPermission: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val running = download as? UpdateDownload.Running
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.update_title), color = BridgeText) },
         text = {
-            Text(
-                stringResource(R.string.update_message, version, AppVersion.NAME),
-                color = BridgeMuted,
-            )
+            Column {
+                Text(
+                    stringResource(R.string.update_message, version, AppVersion.NAME),
+                    color = BridgeMuted,
+                )
+                when (download) {
+                    is UpdateDownload.Running -> {
+                        Spacer(Modifier.height(12.dp))
+                        if (running!!.progress >= 0f) {
+                            LinearProgressIndicator(
+                                progress = { running.progress },
+                                color = BridgeAccent,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                stringResource(
+                                    R.string.update_downloading,
+                                    (running.progress * 100).toInt(),
+                                ),
+                                color = BridgeMuted,
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = BridgeAccent,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+
+                    UpdateDownload.NeedsPermission -> {
+                        Spacer(Modifier.height(12.dp))
+                        Text(stringResource(R.string.update_permission_hint), color = BridgeText)
+                    }
+
+                    UpdateDownload.Failed -> {
+                        Spacer(Modifier.height(12.dp))
+                        Text(stringResource(R.string.update_download_failed), color = BridgeText)
+                    }
+
+                    UpdateDownload.Idle -> Unit
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = onDownload) {
-                Text(stringResource(R.string.update_download), color = BridgeAccent)
+            when (download) {
+                // Während des Ladens keine zweite Anforderung zulassen.
+                is UpdateDownload.Running -> Unit
+                UpdateDownload.NeedsPermission -> TextButton(onClick = onGrantPermission) {
+                    Text(stringResource(R.string.update_grant_permission), color = BridgeAccent)
+                }
+
+                UpdateDownload.Failed -> TextButton(onClick = onDownload) {
+                    Text(stringResource(R.string.update_retry), color = BridgeAccent)
+                }
+
+                UpdateDownload.Idle -> TextButton(onClick = onDownload) {
+                    Text(stringResource(R.string.update_download), color = BridgeAccent)
+                }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.update_later), color = BridgeMuted)
+                Text(
+                    stringResource(
+                        if (running != null) R.string.action_cancel else R.string.update_later,
+                    ),
+                    color = BridgeMuted,
+                )
             }
         },
         containerColor = BridgePanel,

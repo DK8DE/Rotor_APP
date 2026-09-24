@@ -15,6 +15,7 @@ import de.dk8de.rotorapp.rotor.RotorLiveState
 import de.dk8de.rotorapp.rotor.RotorRepository
 import de.dk8de.rotorapp.update.UpdateChecker
 import de.dk8de.rotorapp.update.UpdateInfo
+import de.dk8de.rotorapp.update.UpdateInstaller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,6 +28,19 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Ablauf beim Laden und Installieren einer neuen Version. */
+sealed interface UpdateDownload {
+    data object Idle : UpdateDownload
+
+    /** [progress] 0..1, oder -1 wenn der Server keine Größe meldet. */
+    data class Running(val progress: Float) : UpdateDownload
+
+    /** APK liegt bereit, aber die App darf noch nicht installieren. */
+    data object NeedsPermission : UpdateDownload
+
+    data object Failed : UpdateDownload
+}
 
 /** Ergebnis von Export/Import der Einstellungen. */
 enum class BackupState {
@@ -122,6 +136,12 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     private val _backupState = MutableStateFlow(BackupState.Idle)
     val backupState: StateFlow<BackupState> = _backupState
 
+    private val _updateDownload = MutableStateFlow<UpdateDownload>(UpdateDownload.Idle)
+    val updateDownload: StateFlow<UpdateDownload> = _updateDownload
+    private var downloadJob: Job? = null
+    /** Fertig geladene APK, die nur noch auf die Installationsfreigabe wartet. */
+    private var pendingApk: java.io.File? = null
+
     init {
         // Splash sofort beenden, sobald Profile da sind — nicht auf TCP warten
         viewModelScope.launch {
@@ -191,6 +211,7 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         autoUpdateChecked = true
         viewModelScope.launch {
             delay(2_000) // Start und Rotor-Verbindung nicht ausbremsen
+            UpdateInstaller.clearCached(getApplication())
             val found = runCatching { UpdateChecker.findNewerRelease() }.getOrNull()
             if (found != null) _updateInfo.value = found
         }
@@ -252,7 +273,62 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         _backupState.value = BackupState.Idle
     }
 
+    /** APK laden und — sofern erlaubt — sofort den Installer öffnen. */
+    fun downloadUpdate() {
+        val info = _updateInfo.value ?: return
+        if (_updateDownload.value is UpdateDownload.Running) return
+        downloadJob?.cancel()
+        downloadJob = viewModelScope.launch {
+            _updateDownload.value = UpdateDownload.Running(0f)
+            val ctx = getApplication<Application>()
+            val apk = runCatching {
+                UpdateInstaller.download(ctx, info.downloadUrl) { p ->
+                    _updateDownload.value = UpdateDownload.Running(p)
+                }
+            }.getOrNull()
+            if (apk == null) {
+                _updateDownload.value = UpdateDownload.Failed
+                return@launch
+            }
+            pendingApk = apk
+            startInstallOrAskPermission()
+        }
+    }
+
+    fun openInstallPermission() {
+        runCatching { UpdateInstaller.openInstallPermission(getApplication()) }
+    }
+
+    /**
+     * Nach Rückkehr aus den Systemeinstellungen: Freigabe erteilt → direkt installieren.
+     * Spart dem Nutzer den zweiten Tipp auf „Herunterladen“.
+     */
+    fun resumePendingInstall() {
+        if (_updateDownload.value !is UpdateDownload.NeedsPermission) return
+        startInstallOrAskPermission()
+    }
+
+    private fun startInstallOrAskPermission() {
+        val apk = pendingApk ?: return
+        val ctx = getApplication<Application>()
+        if (!UpdateInstaller.canInstall(ctx)) {
+            _updateDownload.value = UpdateDownload.NeedsPermission
+            return
+        }
+        val ok = runCatching { UpdateInstaller.install(ctx, apk) }.isSuccess
+        if (ok) {
+            _updateDownload.value = UpdateDownload.Idle
+            _updateInfo.value = null
+            pendingApk = null
+        } else {
+            _updateDownload.value = UpdateDownload.Failed
+        }
+    }
+
     fun dismissUpdate() {
+        downloadJob?.cancel()
+        downloadJob = null
+        _updateDownload.value = UpdateDownload.Idle
         _updateInfo.value = null
         if (_updateCheckState.value == UpdateCheckState.Found) {
             _updateCheckState.value = UpdateCheckState.Idle
@@ -529,6 +605,7 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** App wieder im Vordergrund: ggf. neu verbinden + Polling — kein zweites Full-Bootstrap. */
     fun onForeground() {
+        resumePendingInstall()
         viewModelScope.launch {
             val already = repo.state.value.connected
             val ok = runCatching {

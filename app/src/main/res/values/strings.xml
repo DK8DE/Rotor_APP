@@ -176,6 +176,11 @@
     <string name="update_message">Version %1$s is available on GitHub.\nInstalled: %2$s</string>
     <string name="update_download">Download</string>
     <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading … %1$d %%</string>
+    <string name="update_download_failed">Download failed — check your internet connection.</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_permission_hint">To install, the Rotator App needs permission to install apps. The setting applies to this app only.</string>
+    <string name="update_grant_permission">Grant permission</string>
     <string name="update_checking">Checking…</string>
     <string name="update_uptodate">You are up to date.</string>
     <string name="update_failed">Check failed – no internet?</string>

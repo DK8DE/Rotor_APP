@@ -168,6 +168,11 @@
     <string name="update_message">Version %1$s steht auf GitHub bereit.\nInstalliert: %2$s</string>
     <string name="update_download">Herunterladen</string>
     <string name="update_later">Später</string>
+    <string name="update_downloading">Wird geladen … %1$d %%</string>
+    <string name="update_download_failed">Download fehlgeschlagen — Internet prüfen.</string>
+    <string name="update_retry">Erneut versuchen</string>
+    <string name="update_permission_hint">Zum Installieren muss die Rotor App Apps installieren dürfen. Die Einstellung gilt nur für diese App.</string>
+    <string name="update_grant_permission">Erlaubnis erteilen</string>
     <string name="update_checking">Suche…</string>
     <string name="update_uptodate">Version ist aktuell.</string>
     <string name="update_failed">Prüfung fehlgeschlagen – kein Internet?</string>
