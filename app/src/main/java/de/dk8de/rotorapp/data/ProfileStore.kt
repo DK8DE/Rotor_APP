@@ -48,6 +48,8 @@ data class UiDisplayPrefs(
     val locationLat: Double = GeoUtils.DEFAULT_LAT,
     val locationLon: Double = GeoUtils.DEFAULT_LON,
     val locationLocator: String = "",
+    /** Kartenkacheln über Mobilfunk laden (WLAN am Rotor-AP hat kein Internet). */
+    val mapOverCellular: Boolean = false,
     /** App-Sprache: system | de | en */
     val appLanguage: String = AppLanguage.SYSTEM,
 ) {
@@ -78,6 +80,7 @@ class ProfileStore(private val context: Context) {
     private val keyLocationLat = doublePreferencesKey("location_lat")
     private val keyLocationLon = doublePreferencesKey("location_lon")
     private val keyLocationLocator = stringPreferencesKey("location_locator")
+    private val keyMapOverCellular = booleanPreferencesKey("map_over_cellular")
     private val keyAppLanguage = stringPreferencesKey("app_language")
     private val keyFavorites = stringPreferencesKey("position_favorites_json")
 
@@ -109,6 +112,7 @@ class ProfileStore(private val context: Context) {
         locationLat = prefs[keyLocationLat] ?: GeoUtils.DEFAULT_LAT,
         locationLon = prefs[keyLocationLon] ?: GeoUtils.DEFAULT_LON,
         locationLocator = prefs[keyLocationLocator] ?: "",
+        mapOverCellular = prefs[keyMapOverCellular] ?: false,
         appLanguage = prefs[keyAppLanguage] ?: AppLanguage.SYSTEM,
     )
 
@@ -172,6 +176,12 @@ class ProfileStore(private val context: Context) {
             prefs[keyLocationLat] = lat.coerceIn(-90.0, 90.0)
             prefs[keyLocationLon] = lon.coerceIn(-180.0, 180.0)
             prefs[keyLocationLocator] = locator.trim()
+        }
+    }
+
+    suspend fun setMapOverCellular(enabled: Boolean) {
+        context.profileDataStore.edit { prefs ->
+            prefs[keyMapOverCellular] = enabled
         }
     }
 
@@ -287,6 +297,7 @@ class ProfileStore(private val context: Context) {
                 prefs[keyLocationLat] = display.locationLat
                 prefs[keyLocationLon] = display.locationLon
                 prefs[keyLocationLocator] = display.locationLocator
+                prefs[keyMapOverCellular] = display.mapOverCellular
                 prefs[keyAppLanguage] = display.appLanguage
             }
         }

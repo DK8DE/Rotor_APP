@@ -75,6 +75,7 @@ object SettingsBackup {
         .put("locationLat", d.locationLat)
         .put("locationLon", d.locationLon)
         .put("locationLocator", d.locationLocator)
+        .put("mapOverCellular", d.mapOverCellular)
         .put("appLanguage", d.appLanguage)
 
     private fun decodeDisplay(o: JSONObject): UiDisplayPrefs {
@@ -95,6 +96,7 @@ object SettingsBackup {
             locationLat = o.optDouble("locationLat", def.locationLat).coerceIn(-90.0, 90.0),
             locationLon = o.optDouble("locationLon", def.locationLon).coerceIn(-180.0, 180.0),
             locationLocator = o.optString("locationLocator", def.locationLocator).trim(),
+            mapOverCellular = o.optBoolean("mapOverCellular", def.mapOverCellular),
             appLanguage = when (lang) {
                 AppLanguage.DE, AppLanguage.EN -> lang
                 else -> AppLanguage.SYSTEM

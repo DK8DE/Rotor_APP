@@ -95,6 +95,7 @@ fun ProfilesScreen(
     onHeatmapScaleSave: (custom: Boolean, thrBlue: Int, normMin: Int, normMax: Int, thrRed: Int) -> Unit,
     onHeatmapFromBins: () -> Unit,
     onLocationSave: (lat: Double, lon: Double, locator: String) -> Unit,
+    onMapOverCellularChange: (Boolean) -> Unit,
     onAppLanguageChange: (String) -> Unit,
     onCheckUpdate: () -> Unit,
     updateCheckState: UpdateCheckState,
@@ -353,6 +354,12 @@ fun ProfilesScreen(
                     lon = state.displayPrefs.locationLon,
                     locator = state.displayPrefs.locationLocator,
                     onSave = onLocationSave,
+                )
+                SettingsCheckRow(
+                    checked = state.displayPrefs.mapOverCellular,
+                    onChange = onMapOverCellularChange,
+                    title = stringResource(R.string.toggle_map_cellular),
+                    subtitle = stringResource(R.string.toggle_map_cellular_sub),
                 )
             }
 

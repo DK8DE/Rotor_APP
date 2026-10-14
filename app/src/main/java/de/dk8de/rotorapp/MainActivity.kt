@@ -126,6 +126,7 @@ class MainActivity : AppCompatActivity() {
                             onLocationSave = { lat, lon, loc ->
                                 vm.setLocation(lat, lon, loc)
                             },
+                            onMapOverCellularChange = vm::setMapOverCellular,
                             onAppLanguageChange = vm::setAppLanguage,
                             onCheckUpdate = vm::checkForUpdateNow,
                             updateCheckState = vm.updateCheckState

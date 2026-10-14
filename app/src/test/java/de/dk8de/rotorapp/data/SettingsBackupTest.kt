@@ -47,6 +47,7 @@ class SettingsBackupTest {
         locationLat = 51.25,
         locationLon = 7.5,
         locationLocator = "JO31",
+        mapOverCellular = true,
         appLanguage = AppLanguage.EN,
     )
 

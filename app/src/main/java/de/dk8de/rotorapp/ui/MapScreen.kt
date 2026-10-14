@@ -9,6 +9,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -51,6 +53,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import de.dk8de.rotorapp.R
 import de.dk8de.rotorapp.geo.GeoUtils
+import de.dk8de.rotorapp.net.CellularBinder
+import de.dk8de.rotorapp.net.CellularWebLoader
 import de.dk8de.rotorapp.rotor.AntennaMath
 import de.dk8de.rotorapp.rotor.AntennaSlot
 import de.dk8de.rotorapp.ui.theme.BridgeMuted
@@ -58,6 +62,7 @@ import de.dk8de.rotorapp.ui.theme.BridgePanel
 import de.dk8de.rotorapp.ui.theme.BridgeText
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Karten-Seite (Pager): Leaflet bleibt gecacht; [active] steuert Sichtbarkeit. */
 @Composable
@@ -77,6 +82,19 @@ fun MapScreen(
     val mapBarHint = stringResource(R.string.map_bar_hint)
     val mapLocatorOn = stringResource(R.string.map_locator_on)
     val mapLocatorOff = stringResource(R.string.map_locator_off)
+    val context = LocalContext.current
+    val mapOverCellular = state.displayPrefs.mapOverCellular
+    // shouldInterceptRequest läuft im Arbeits-Thread des WebView, daher kein Compose-State.
+    val cellularActive = remember { AtomicBoolean(false) }
+
+    DisposableEffect(mapOverCellular) {
+        cellularActive.set(mapOverCellular)
+        if (mapOverCellular) CellularBinder.enable(context)
+        onDispose {
+            cellularActive.set(false)
+            if (mapOverCellular) CellularBinder.disable(context)
+        }
+    }
 
     fun pushLocatorOverlay(wv: WebView, show: Boolean) {
         wv.evaluateJavascript(
@@ -192,7 +210,19 @@ fun MapScreen(
                         settings.loadWithOverviewMode = true
                         settings.useWideViewPort = true
                         webChromeClient = WebChromeClient()
+                        val webViewUa = settings.userAgentString.orEmpty()
                         webViewClient = object : WebViewClient() {
+                            /** Kacheln über Mobilfunk holen, wenn das WLAN kein Internet hat. */
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                            ): WebResourceResponse? {
+                                if (!cellularActive.get()) return null
+                                val req = request ?: return null
+                                val cell = CellularBinder.network() ?: return null
+                                return CellularWebLoader.load(cell, req, webViewUa)
+                            }
+
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 pageReady = true
                                 val wv = view ?: return

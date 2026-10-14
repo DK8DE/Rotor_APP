@@ -135,6 +135,8 @@
     <string name="field_longitude">Longitude (°)</string>
     <string name="field_maidenhead">Maidenhead locator (optional)</string>
     <string name="btn_save_location">SAVE LOCATION</string>
+    <string name="toggle_map_cellular">Load map over mobile data</string>
+    <string name="toggle_map_cellular_sub">For rotator Wi-Fi without internet · uses mobile data</string>
     <string name="field_profile_name">Name</string>
     <string name="field_host">IP / Host</string>
     <string name="field_port">Port</string>

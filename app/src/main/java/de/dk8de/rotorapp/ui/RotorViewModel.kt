@@ -543,6 +543,12 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setMapOverCellular(enabled: Boolean) {
+        viewModelScope.launch {
+            store.setMapOverCellular(enabled)
+        }
+    }
+
     fun setAppLanguage(tag: String) {
         viewModelScope.launch {
             store.setAppLanguage(tag)

@@ -128,6 +128,8 @@
     <string name="field_longitude">Länge (°)</string>
     <string name="field_maidenhead">Maidenhead-Locator (optional)</string>
     <string name="btn_save_location">STANDORT SPEICHERN</string>
+    <string name="toggle_map_cellular">Karte über mobile Daten laden</string>
+    <string name="toggle_map_cellular_sub">Für WLAN am Rotor ohne Internet · verbraucht Datenvolumen</string>
     <string name="field_profile_name">Name</string>
     <string name="field_host">IP / Host</string>
     <string name="field_port">Port</string>
