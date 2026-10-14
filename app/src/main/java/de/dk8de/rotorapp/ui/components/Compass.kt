@@ -84,6 +84,8 @@ fun AzimuthCompass(
     enabled: Boolean = true,
     /** Endanschlag / Versatz der gewählten Antenne (0 = Nord). */
     endstopDeg: Float = 0f,
+    /** Farbe des Endanschlag-Dreiecks (Überlauf-Rotor: grün in der ersten Runde). */
+    endstopColor: Color = BridgeStop,
     /** Öffnungswinkel-Overlay (0 = aus). Zentriert auf currentDeg. */
     beamOpeningDeg: Float = 0f,
     beamColor: Color = Color.Transparent,
@@ -228,7 +230,7 @@ fun AzimuthCompass(
             )
         }
 
-        // Roter Endanschlag am Antennenversatz (Spitze nach innen)
+        // Endanschlag am Antennenversatz (Spitze nach innen)
         run {
             val deg = wrap360(endstopDeg)
             val rad = Math.toRadians(deg.toDouble())
@@ -253,7 +255,7 @@ fun AzimuthCompass(
                 lineTo(baseRpt.x, baseRpt.y)
                 close()
             }
-            drawPath(tri, BridgeStop)
+            drawPath(tri, endstopColor)
         }
 
         val degreePaint = android.graphics.Paint().apply {

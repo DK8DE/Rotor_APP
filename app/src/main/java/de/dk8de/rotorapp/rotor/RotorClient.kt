@@ -40,6 +40,11 @@ class RotorClient(
     /** Zeit seit dem letzten empfangenen Byte (0 = gerade verbunden/getrennt). */
     val linkSilenceMs: Long get() = link.silenceMs
 
+    /** Funkstille-Uhr neu starten (z. B. nach Pause ohne Polling). */
+    fun markLinkActive() {
+        link.markActive()
+    }
+
     suspend fun sendRaw(frame: String): List<Telegram> {
         link.send(frame)
         return readTelegrams(400)

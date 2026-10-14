@@ -108,6 +108,7 @@ fun MapScreen(
         state.rotor.azDeg,
         state.rotor.azTarget,
         state.rotor.azCompassTarget,
+        state.rotor.azMaxDeg,
         state.rotor.selectedAntenna,
         state.rotor.antennas,
         state.displayPrefs.locationLat,
@@ -445,6 +446,20 @@ private fun buildMapBeamJson(
         null
     }
 
+    // Überlauf-Rotor: Ziel in der ersten Runde grün, ab der zweiten rot.
+    val overlap = state.rotor.azOverlap
+    val secondTurn = state.rotor.azTargetSecondTurn
+    val targetColor = when {
+        !overlap -> "#ff7043"
+        secondTurn -> "#cc4444"
+        else -> "#5ee07a"
+    }
+    val targetFill = when {
+        !overlap -> "#ffab91"
+        secondTurn -> "#e59a9a"
+        else -> "#a7edb8"
+    }
+
     val locator = GeoUtils.latLonToMaidenhead(lat, lon, 6)
     val locStr = buildString {
         append("%.4f".format(lat))
@@ -465,7 +480,9 @@ private fun buildMapBeamJson(
         .put("range_km", rangeKm)
         .put("beams", beams)
         .put("target_bearing_line", targetLine ?: JSONObject.NULL)
-        .put("target_bearing_color", "#ff7043")
+        .put("target_bearing_color", targetColor)
+        .put("target_color", targetColor)
+        .put("target_fill", targetFill)
         .put("recenter", recenter)
         .put("status_line", statusLine ?: "")
         .toString()

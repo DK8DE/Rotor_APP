@@ -40,6 +40,9 @@
       let clickMarker = null;
       let beamLayers = [];
       let targetLine = null;
+      // Zielfarbe: Überlauf-Rotor grün in der ersten Runde, rot in der zweiten.
+      let targetColor = '#ff7043';
+      let targetFill = '#ffab91';
 
       window.map = L.map('map', {
         zoomControl: true,
@@ -240,7 +243,7 @@
       window.setClickMarker = function(lat2, lon2) {
         if (clickMarker) window.map.removeLayer(clickMarker);
         clickMarker = L.circleMarker([lat2, lon2], {
-          radius: 7, color: '#ff7043', fillColor: '#ffab91', fillOpacity: 0.9, weight: 2
+          radius: 7, color: targetColor, fillColor: targetFill, fillOpacity: 0.9, weight: 2
         }).addTo(window.map);
       };
 
@@ -262,6 +265,13 @@
             radius: 8, color: '#5AB0FF', fillColor: '#5AB0FF', fillOpacity: 1, weight: 2
           }).addTo(window.map);
           if (data.recenter) window.map.setView([data.lat, data.lon], window.map.getZoom());
+        }
+        if (data.target_color) {
+          targetColor = data.target_color;
+          targetFill = data.target_fill || data.target_color;
+          if (clickMarker) {
+            clickMarker.setStyle({ color: targetColor, fillColor: targetFill });
+          }
         }
         clearBeamLayers();
         drawBeamLayers(data.beams || []);

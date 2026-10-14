@@ -129,6 +129,13 @@ data class RotorLiveState(
 
     /** Rotor fährt über 360° hinaus — Ziel kann eine Umdrehung weiter liegen. */
     val azOverlap: Boolean get() = azMaxDeg > 360.5
+
+    /**
+     * Gesetztes Ziel liegt in der zweiten Umdrehung (z. B. 400° statt 40°).
+     * Nur bei Überlauf-Rotoren; sonst gibt es keine zweite Runde.
+     */
+    val azTargetSecondTurn: Boolean
+        get() = azOverlap && (azSollDeg ?: 0.0) >= 360.0
     val hasFault: Boolean get() = azErrorCode != 0 || elErrorCode != 0
     val hasWarning: Boolean get() = azWarnIds.isNotEmpty() || elWarnIds.isNotEmpty()
 
@@ -745,11 +752,41 @@ class RotorRepository(context: android.content.Context) {
             val neverPolled = lastOkPollMs == 0L
             val fresh = !neverPolled && now - lastOkPollMs <= staleAfterMs
             if (neverPolled || fresh) return true
+            // Socket steht noch: erst nachfragen statt eine gesunde Verbindung
+            // wegzuwerfen — nach App-Wechsel ist sie meist völlig in Ordnung.
+            if (probeLink()) return true
         }
         if (client.isConnected) {
             runCatching { disconnect() }
         }
         return connect(lastHost.ifBlank { profile.host }, lastPort, quietFail = true)
+    }
+
+    /**
+     * Eine echte Busabfrage wagen, um eine stille Verbindung zu prüfen.
+     * @return true, wenn eine Achse geantwortet hat.
+     */
+    private suspend fun probeLink(): Boolean {
+        if (!client.isConnected) return false
+        val before = lastOkPollMs
+        ioMutex.withLock {
+            runCatching { pollPositionsLocked(expectedPeriodS = 0.3f) }
+            if (lastOkPollMs == before) {
+                runCatching { probeOfflineAxesLocked() }
+            }
+        }
+        return lastOkPollMs != before
+    }
+
+    /**
+     * Pause ohne Polling beenden (App kommt aus dem Hintergrund).
+     *
+     * Ohne das würde die aufgelaufene Funkstille sofort als toter Link gelten,
+     * obwohl in der Zeit schlicht niemand gefragt hat.
+     */
+    fun resumeLinkWatchdog() {
+        client.markLinkActive()
+        linkSilenceLimitMs = LINK_SILENCE_MS
     }
 
     /** TCP-Flag und UI-State angleichen (Socket kann tot sein, UI noch „verbunden“). */
@@ -773,6 +810,11 @@ class RotorRepository(context: android.content.Context) {
             return
         }
         if (silent < linkSilenceLimitMs) return
+        // Letzte Chance: antwortet der Bus doch noch, bleibt die Verbindung bestehen.
+        if (probeLink()) {
+            linkSilenceLimitMs = LINK_SILENCE_MS
+            return
+        }
         runCatching { client.disconnect() }
         markLinkLost("Keine Daten seit ${silent / 1000}s → Reconnect")
         // Bridge erreichbar, aber Bus stumm (alle Achsen aus): nicht endlos im

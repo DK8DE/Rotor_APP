@@ -617,6 +617,8 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
     /** App wieder im Vordergrund: ggf. neu verbinden + Polling — kein zweites Full-Bootstrap. */
     fun onForeground() {
         resumePendingInstall()
+        // Im Hintergrund wurde nicht gepollt — die Stille dort zählt nicht als Abriss.
+        repo.resumeLinkWatchdog()
         viewModelScope.launch {
             val already = repo.state.value.connected
             val ok = runCatching {
@@ -683,9 +685,10 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun startPolling() {
         if (pollJob?.isActive != true) {
+            repo.resumeLinkWatchdog()
             pollJob = viewModelScope.launch {
                 var lastPosPollMs = 0L
-                var reconnectBackoffMs = 1_000L
+                var reconnectBackoffMs = RECONNECT_BACKOFF_START_MS
                 while (isActive) {
                     // Nie ungeschützt: eine Exception hier würde den Poll-Job beenden
                     // und damit jeden Reconnect bis zum App-Neustart verhindern.
@@ -699,11 +702,12 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                                 repo.ensureConnectedOrReconnect(staleAfterMs = 0L)
                             }.getOrDefault(false)
                             if (ok) {
-                                reconnectBackoffMs = 1_000L
+                                reconnectBackoffMs = RECONNECT_BACKOFF_START_MS
                                 delay(200L)
                             } else {
                                 delay(reconnectBackoffMs)
-                                reconnectBackoffMs = (reconnectBackoffMs * 2).coerceAtMost(10_000L)
+                                reconnectBackoffMs = (reconnectBackoffMs * 2)
+                                    .coerceAtMost(RECONNECT_BACKOFF_MAX_MS)
                             }
                         }
                         s.busPassive -> {
@@ -833,6 +837,12 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
             delay(step)
             left -= step
         }
+    }
+
+    private companion object {
+        /** Rotor-WLAN liegt direkt daneben — erster Versuch darf schnell kommen. */
+        const val RECONNECT_BACKOFF_START_MS = 400L
+        const val RECONNECT_BACKOFF_MAX_MS = 3_000L
     }
 
     private fun stopPolling() {

@@ -1,6 +1,8 @@
 package de.dk8de.rotorapp.rotor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Zielwahl bei Rotoren, die über 360° hinaus fahren (GETMAXDG > 360). */
@@ -71,6 +73,18 @@ class AntennaMathOverlapTest {
         assertEquals(400.0, s.azSollText!!, 0.001)
         // Nadel bleibt auf der gewrappten Peilung
         assertEquals(40.0, s.displayAz(s.azSmoothDeg)!!, 0.001)
+    }
+
+    @Test
+    fun `zweite Runde meldet nur der Ueberlauf-Rotor`() {
+        assertTrue(RotorLiveState(azTarget = 400.0, azMaxDeg = max430).azTargetSecondTurn)
+        assertFalse(RotorLiveState(azTarget = 40.0, azMaxDeg = max430).azTargetSecondTurn)
+        // Standardrotor kennt keine zweite Runde
+        assertFalse(RotorLiveState(azTarget = 40.0).azTargetSecondTurn)
+        // Kompass-Soll vom zweiten Controller zählt genauso
+        assertTrue(
+            RotorLiveState(azCompassTarget = 365.0, azMaxDeg = max430).azTargetSecondTurn,
+        )
     }
 
     @Test

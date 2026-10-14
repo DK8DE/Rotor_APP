@@ -46,6 +46,16 @@ class TcpLink(context: Context) {
             SystemClock.elapsedRealtime() - lastRxMs
         }
 
+    /**
+     * Funkstille-Uhr neu starten, ohne dass Daten geflossen sind.
+     *
+     * Nötig beim Wechsel aus dem Hintergrund: dort pollt die App nicht, die
+     * Stille ist also kein Zeichen für eine tote Verbindung.
+     */
+    fun markActive() {
+        if (isConnected) lastRxMs = SystemClock.elapsedRealtime()
+    }
+
     suspend fun connect(host: String, port: Int, timeoutMs: Int = 3000) = withContext(Dispatchers.IO) {
         mutex.withLock {
             disconnectLocked(notify = false)

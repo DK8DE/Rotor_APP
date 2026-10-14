@@ -744,6 +744,13 @@ private fun azimuthHudTopRight(state: AppUiState): List<Pair<String, String>> {
     return listOf(label to t(state.rotor.tempMotorAzC))
 }
 
+/**
+ * Endanschlag-Dreieck: beim Überlauf-Rotor grün, solange das Ziel in der ersten
+ * Runde liegt, und rot ab der zweiten. Rotoren ohne Überlauf bleiben rot.
+ */
+private fun azEndstopColor(state: AppUiState): Color =
+    if (state.rotor.azOverlap && !state.rotor.azTargetSecondTurn) BridgeIst else BridgeStop
+
 @Composable
 private fun elevationHudTopRight(state: AppUiState): Pair<String, String> {
     val connected = state.rotor.connected
@@ -1021,6 +1028,7 @@ private fun LandscapeAxisColumn(
                     onPick = onPick,
                     enabled = canMove,
                     endstopDeg = endstop,
+                    endstopColor = azEndstopColor(state),
                     beamOpeningDeg = ant?.openingDeg?.toFloat() ?: 0f,
                     beamColor = antennaBeamColor(state.rotor.selectedAntenna),
                     showBeamOverlay = state.showBeamOverlay,
@@ -1188,6 +1196,7 @@ private fun AzimuthPage(
                 onPick = onAzimuth,
                 enabled = canMove,
                 endstopDeg = endstop,
+                endstopColor = azEndstopColor(state),
                 beamOpeningDeg = ant?.openingDeg?.toFloat() ?: 0f,
                 beamColor = antennaBeamColor(state.rotor.selectedAntenna),
                 showBeamOverlay = state.showBeamOverlay,
