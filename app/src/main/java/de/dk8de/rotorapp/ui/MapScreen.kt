@@ -2,6 +2,7 @@ package de.dk8de.rotorapp.ui
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.net.Network
 import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
@@ -16,16 +17,28 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +60,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -53,15 +68,20 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import de.dk8de.rotorapp.R
 import de.dk8de.rotorapp.geo.GeoUtils
+import de.dk8de.rotorapp.geo.Place
+import de.dk8de.rotorapp.geo.PlaceSearch
 import de.dk8de.rotorapp.net.CellularBinder
 import de.dk8de.rotorapp.net.CellularWebLoader
 import de.dk8de.rotorapp.rotor.AntennaMath
 import de.dk8de.rotorapp.rotor.AntennaSlot
+import de.dk8de.rotorapp.ui.theme.BridgeAccent
 import de.dk8de.rotorapp.ui.theme.BridgeMuted
 import de.dk8de.rotorapp.ui.theme.BridgePanel
 import de.dk8de.rotorapp.ui.theme.BridgeText
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Karten-Seite (Pager): Leaflet bleibt gecacht; [active] steuert Sichtbarkeit. */
@@ -76,6 +96,7 @@ fun MapScreen(
     var pageReady by remember { mutableStateOf(false) }
     var lastStatus by remember { mutableStateOf("") }
     var locatorOverlay by remember { mutableStateOf(true) }
+    var showSearch by remember { mutableStateOf(false) }
     val latestState = rememberUpdatedState(state)
     val latestOnClick = rememberUpdatedState(onMapClickBearing)
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
@@ -94,6 +115,23 @@ fun MapScreen(
             cellularActive.set(false)
             if (mapOverCellular) CellularBinder.disable(context)
         }
+    }
+
+    /** Suchtreffer: Karte zentrieren, Zielpunkt setzen und sofort dorthin fahren. */
+    fun applySearchHit(place: Place) {
+        webView?.evaluateJavascript(
+            "try{window.showSearchHit(${place.lat}, ${place.lon});}catch(e){}",
+            null,
+        )
+        val (slat, slon) = latestState.value.displayPrefs.effectiveLatLon()
+        val bearing = GeoUtils.bearingDeg(slat, slon, place.lat, place.lon)
+        lastStatus = context.getString(
+            R.string.map_search_status,
+            place.name.substringBefore(','),
+            bearing,
+            GeoUtils.haversineKm(slat, slon, place.lat, place.lon),
+        )
+        latestOnClick.value(bearing)
     }
 
     fun pushLocatorOverlay(wv: WebView, show: Boolean) {
@@ -176,12 +214,21 @@ fun MapScreen(
                 fontSize = 12.sp,
                 modifier = Modifier.padding(start = 4.dp),
             )
-            TextButton(onClick = { locatorOverlay = !locatorOverlay }) {
-                Text(
-                    text = if (locatorOverlay) mapLocatorOn else mapLocatorOff,
-                    color = if (locatorOverlay) BridgeText else Color(0xFF9E9E9E),
-                    fontSize = 13.sp,
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { locatorOverlay = !locatorOverlay }) {
+                    Text(
+                        text = if (locatorOverlay) mapLocatorOn else mapLocatorOff,
+                        color = if (locatorOverlay) BridgeText else Color(0xFF9E9E9E),
+                        fontSize = 13.sp,
+                    )
+                }
+                IconButton(onClick = { showSearch = true }) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = stringResource(R.string.map_search),
+                        tint = BridgeText,
+                    )
+                }
             }
         }
 
@@ -320,6 +367,17 @@ fun MapScreen(
         }
     }
 
+    if (showSearch) {
+        MapSearchDialog(
+            searchNetwork = { if (mapOverCellular) CellularBinder.network() else null },
+            onPick = { place ->
+                showSearch = false
+                applySearchHit(place)
+            },
+            onDismiss = { showSearch = false },
+        )
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             webView?.apply {
@@ -329,6 +387,104 @@ fun MapScreen(
             webView = null
         }
     }
+}
+
+/**
+ * Suche nach Locator, Stadt oder PLZ. Bei mehreren Treffern erscheint die
+ * Auswahlliste, ein Locator wird ohne Netz direkt aufgelöst.
+ */
+@Composable
+private fun MapSearchDialog(
+    searchNetwork: () -> Network?,
+    onPick: (Place) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val language = Locale.getDefault().language.ifBlank { "en" }
+    val runningText = stringResource(R.string.search_running)
+    val noneText = stringResource(R.string.search_none)
+    val failedText = stringResource(R.string.search_failed)
+    val pickText = stringResource(R.string.search_pick)
+
+    fun start() {
+        val q = query.trim()
+        if (q.isEmpty() || running) return
+        running = true
+        status = runningText
+        results = emptyList()
+        scope.launch {
+            val found = runCatching {
+                PlaceSearch.search(q, searchNetwork(), language)
+            }
+            running = false
+            found.onSuccess { list ->
+                when {
+                    list.isEmpty() -> status = noneText
+                    list.size == 1 -> onPick(list.first())
+                    else -> {
+                        results = list
+                        status = pickText
+                    }
+                }
+            }.onFailure {
+                status = failedText
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.search_title), color = BridgeText) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.search_hint)) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { start() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                status?.let {
+                    Text(it, color = BridgeMuted, fontSize = 12.sp)
+                }
+                if (results.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 260.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        items(results) { place ->
+                            Text(
+                                place.name,
+                                color = BridgeText,
+                                fontSize = 13.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onPick(place) }
+                                    .padding(vertical = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { start() }, enabled = !running) {
+                Text(stringResource(R.string.btn_search), color = BridgeAccent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel), color = BridgeMuted)
+            }
+        },
+        containerColor = BridgePanel,
+    )
 }
 
 /** Windrichtung und -geschwindigkeit oben rechts auf der Karte (ohne Temperaturen). */

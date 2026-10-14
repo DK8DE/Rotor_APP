@@ -77,6 +77,15 @@
     <string name="map_locator_off">Locator off</string>
     <string name="map_load_error">Map could not be loaded.</string>
     <string name="map_click_status">Target %1$.1f° · %2$.1f km</string>
+    <string name="map_search_status">%1$s · %2$.1f° · %3$.1f km</string>
+    <string name="map_search">Search</string>
+    <string name="search_title">Find place</string>
+    <string name="search_hint">Locator, city or postcode</string>
+    <string name="btn_search">SEARCH</string>
+    <string name="search_running">Searching …</string>
+    <string name="search_none">Nothing found</string>
+    <string name="search_failed">Search failed — no internet?</string>
+    <string name="search_pick">Several hits — please choose</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

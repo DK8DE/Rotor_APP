@@ -71,6 +71,15 @@
     <string name="map_locator_off">Locator aus</string>
     <string name="map_load_error">Karte konnte nicht geladen werden.</string>
     <string name="map_click_status">Ziel %1$.1f° · %2$.1f km</string>
+    <string name="map_search_status">%1$s · %2$.1f° · %3$.1f km</string>
+    <string name="map_search">Suchen</string>
+    <string name="search_title">Ort suchen</string>
+    <string name="search_hint">Locator, Stadt oder PLZ</string>
+    <string name="btn_search">SUCHEN</string>
+    <string name="search_running">Suche läuft …</string>
+    <string name="search_none">Nichts gefunden</string>
+    <string name="search_failed">Suche fehlgeschlagen — kein Internet?</string>
+    <string name="search_pick">Mehrere Treffer — bitte wählen</string>
 
     <string name="settings_title">Einstellungen</string>
     <string name="section_profiles">Profile</string>

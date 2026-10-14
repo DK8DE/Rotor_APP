@@ -247,6 +247,13 @@
         }).addTo(window.map);
       };
 
+      /** Suchtreffer anfahren: Karte zentrieren und Zielpunkt setzen. */
+      window.showSearchHit = function(lat2, lon2, zoom) {
+        const z = (zoom && zoom > 0) ? zoom : Math.max(window.map.getZoom(), 9);
+        window.map.setView([lat2, lon2], z);
+        window.setClickMarker(lat2, lon2);
+      };
+
       window.clearClickMarker = function() {
         if (clickMarker) { window.map.removeLayer(clickMarker); clickMarker = null; }
       };
@@ -278,9 +285,8 @@
         drawTargetLine(data.target_bearing_line, data.target_bearing_color);
         const info = document.getElementById('infoMain');
         if (info) {
+          // Standort und Öffnungswinkel bewusst nicht — die Karte braucht den Platz.
           info.innerHTML =
-            '<div><strong>Standort:</strong> ' + (data.location_str || '') + '</div>' +
-            '<div><strong>Öffnung:</strong> ' + Number(data.opening || 0).toFixed(1) + '°</div>' +
             '<div><strong>Reichweite:</strong> ' + Number(data.range_km || 0).toFixed(1) + ' km</div>' +
             (data.status_line ? ('<div>' + data.status_line + '</div>') : '');
         }
