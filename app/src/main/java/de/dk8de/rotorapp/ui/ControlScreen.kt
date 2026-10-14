@@ -946,12 +946,12 @@ private fun LandscapeAxisColumn(
     val online = if (azimuth) state.rotor.azOnline else state.rotor.elOnline
     val offline = !state.rotor.connected || !online
     val ist = if (azimuth) {
-        state.rotor.displayAz(state.rotor.azSmoothDeg ?: state.rotor.azDeg)
+        state.rotor.azIstText
     } else {
         state.rotor.elSmoothDeg ?: state.rotor.elDeg
     }
     val soll = if (azimuth) {
-        state.rotor.azSollDisplay()
+        state.rotor.azSollText
     } else {
         state.rotor.elSollDeg
     }
@@ -1421,8 +1421,8 @@ private fun formatFavoriteLabel(fav: PositionFavorite, elevationEnabled: Boolean
 @Composable
 private fun StatusCardAz(state: AppUiState) {
     val offline = !state.rotor.connected || !state.rotor.azOnline
-    val ist = state.rotor.displayAz(state.rotor.azSmoothDeg ?: state.rotor.azDeg)
-    val soll = state.rotor.azSollDisplay()
+    val ist = state.rotor.azIstText
+    val soll = state.rotor.azSollText
     val na = stringResource(R.string.value_na)
     val suffixHoming = stringResource(R.string.status_suffix_homing)
     Card(

@@ -137,6 +137,19 @@ class RotorClient(
         return Rs485Protocol.parseDegree(ack.params)?.toInt()
     }
 
+    /**
+     * Maximaler Achswinkel in Grad (GETMAXDG).
+     * 360 beim Standardrotor, bei Absolut-Encodern mehr (z. B. 430) — der
+     * Bereich über 360° ist dieselbe Peilung, nur eine Umdrehung weiter.
+     */
+    suspend fun getMaxDg(dst: Int, timeoutMs: Long = 800): Double? {
+        val frame = Rs485Protocol.build(masterId, dst, "GETMAXDG", "0")
+        val ack = sendAndAwait(frame, "ACK_GETMAXDG", "NAK_GETMAXDG", timeoutMs = timeoutMs)
+            ?: return null
+        if (ack.cmd.startsWith("NAK")) return null
+        return Rs485Protocol.parseDegree(ack.params)
+    }
+
     /** Warnungen abfragen (`0` oder `id;id;…`). */
     suspend fun getWarn(dst: Int, timeoutMs: Long = 800): List<Int>? {
         val frame = Rs485Protocol.build(masterId, dst, "GETWARN", "0")

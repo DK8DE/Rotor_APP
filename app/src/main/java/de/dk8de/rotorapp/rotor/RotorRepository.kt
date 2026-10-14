@@ -85,6 +85,11 @@ data class RotorLiveState(
     val elRotorType: Int = 2,
     /** Max. Elevationwinkel (90 oder 180) für Anzeige/Eingabe. */
     val elMaxDeg: Double = 90.0,
+    /**
+     * Max. Azimutwinkel aus GETMAXDG. 360 beim Standardrotor; Absolut-Encoder
+     * fahren weiter (z. B. 430), dort ist 400° dieselbe Peilung wie 40°.
+     */
+    val azMaxDeg: Double = 360.0,
     /** Gelatchter Fehlercode (Broadcast ERR / ACK_GETERR), 0 = keiner. */
     val azErrorCode: Int = 0,
     val elErrorCode: Int = 0,
@@ -121,6 +126,9 @@ data class RotorLiveState(
     val azSollDeg: Double? get() = azCompassTarget ?: azTarget
     val elSollDeg: Double? get() = elCompassTarget ?: elTarget
     val elIs180: Boolean get() = elMaxDeg >= 179.5
+
+    /** Rotor fährt über 360° hinaus — Ziel kann eine Umdrehung weiter liegen. */
+    val azOverlap: Boolean get() = azMaxDeg > 360.5
     val hasFault: Boolean get() = azErrorCode != 0 || elErrorCode != 0
     val hasWarning: Boolean get() = azWarnIds.isNotEmpty() || elWarnIds.isNotEmpty()
 
@@ -144,6 +152,25 @@ data class RotorLiveState(
     /** Anzeigepeilung → Rotorstellung (Versatz abziehen, ohne Dipol-Wahl). */
     fun rotorAzFromDisplay(displayDeg: Double): Double =
         AntennaMath.rotorFromDisplay(displayDeg, selectedOffsetDeg)
+
+    /**
+     * Ist-Wert für die Textanzeige. Beim Overlap-Rotor mit Umdrehung, also
+     * 400° statt 40° — nur so ist zu sehen, wo der Rotor wirklich steht.
+     * Die Kompassnadel bleibt bei der gewrappten Peilung.
+     */
+    val azIstText: Double?
+        get() = withTurn(displayAz(azSmoothDeg ?: azDeg), azDeg)
+
+    /** Soll-Wert für die Textanzeige, passend zu [azIstText]. */
+    val azSollText: Double?
+        get() = withTurn(azSollDisplay(), azSollDeg)
+
+    /** Gewrappte Peilung auf die Umdrehung schieben, in der der Rotor steht. */
+    private fun withTurn(wrapped: Double?, rotorDeg: Double?): Double? {
+        if (!azOverlap || wrapped == null || rotorDeg == null) return wrapped
+        val turns = kotlin.math.round((rotorDeg - wrapped) / 360.0)
+        return wrapped + turns * 360.0
+    }
 }
 
 object AntennaMath {
@@ -158,6 +185,35 @@ object AntennaMath {
 
     fun displayFromRotor(rotorDeg: Double, offsetDeg: Double): Double =
         wrap360(rotorDeg + offsetDeg)
+
+    /**
+     * Ziel in den Fahrbereich eines Overlap-Rotors legen.
+     *
+     * Über 360° hinaus zeigt der Rotor dieselbe Peilung noch einmal: Bei
+     * `maxDeg = 430` ist 400° gleichbedeutend mit 40°. Von 355° aus sind das
+     * 45° Fahrweg statt 315° über den Nullpunkt zurück. Gewählt wird deshalb
+     * die erreichbare Stellung mit dem kürzesten Weg.
+     *
+     * @param targetDeg Zielpeilung in Rotorkoordinaten (beliebig, wird gewrappt).
+     * @param currentDeg aktuelle Rotorstellung; null → Ziel ohne Umdrehung.
+     * @param maxDeg Fahrbereich 0..maxDeg aus GETMAXDG.
+     */
+    fun nearestReachable(targetDeg: Double, currentDeg: Double?, maxDeg: Double): Double {
+        val base = wrap360(targetDeg)
+        if (maxDeg <= 360.5 || currentDeg == null) return base
+        var best = base
+        var bestDist = kotlin.math.abs(currentDeg - base)
+        var cand = base + 360.0
+        while (cand <= maxDeg + 0.01) {
+            val dist = kotlin.math.abs(currentDeg - cand)
+            if (dist < bestDist) {
+                best = cand
+                bestDist = dist
+            }
+            cand += 360.0
+        }
+        return best
+    }
 
     fun rotorFromDisplay(displayDeg: Double, offsetDeg: Double): Double =
         wrap360(displayDeg - offsetDeg)
@@ -297,6 +353,8 @@ class RotorRepository(context: android.content.Context) {
 
     /** Wenn GETROTORTYPE einen neuen EL-Typ liefert: Profil-Cache speichern. */
     var onElRotorTypeCached: ((RotorProfile) -> Unit)? = null
+    /** Wenn GETMAXDG einen anderen AZ-Fahrbereich liefert: Profil-Cache speichern. */
+    var onAzMaxDegCached: ((RotorProfile) -> Unit)? = null
     /** Wind enable aus GETWINDENABLE → Profil/Haken anpassen. */
     var onWindEnableSynced: ((RotorProfile) -> Unit)? = null
 
@@ -516,6 +574,7 @@ class RotorRepository(context: android.content.Context) {
             azRotorType = 1,
             elRotorType = p.cachedElRotorType(),
             elMaxDeg = p.cachedElMaxDeg(),
+            azMaxDeg = p.cachedAzMaxDeg(),
             azErrorCode = 0,
             elErrorCode = 0,
             azWarnIds = emptyList(),
@@ -563,6 +622,7 @@ class RotorRepository(context: android.content.Context) {
                 azRotorType = 1,
                 elRotorType = profile.cachedElRotorType(),
                 elMaxDeg = profile.cachedElMaxDeg(),
+            azMaxDeg = profile.cachedAzMaxDeg(),
                 azErrorCode = 0,
                 elErrorCode = 0,
                 azWarnIds = emptyList(),
@@ -614,6 +674,7 @@ class RotorRepository(context: android.content.Context) {
                 azRotorType = 1,
                 elRotorType = profile.cachedElRotorType(),
                 elMaxDeg = profile.cachedElMaxDeg(),
+            azMaxDeg = profile.cachedAzMaxDeg(),
                 azErrorCode = 0,
                 elErrorCode = 0,
                 azWarnIds = emptyList(),
@@ -660,6 +721,7 @@ class RotorRepository(context: android.content.Context) {
             azRotorType = 1,
             elRotorType = profile.cachedElRotorType(),
             elMaxDeg = profile.cachedElMaxDeg(),
+            azMaxDeg = profile.cachedAzMaxDeg(),
             azErrorCode = 0,
             elErrorCode = 0,
             azWarnIds = emptyList(),
@@ -1698,6 +1760,7 @@ class RotorRepository(context: android.content.Context) {
                 // Antennenauswahl/-werte vom AZ nachziehen (war offline beim Connect)
                 runCatching { refreshAntennasLocked() }
                 runCatching { refreshErrorsLocked(only = RotorAxis.AZ) }
+                runCatching { queryAzMaxDegLocked() }
             }
         }
 
@@ -1882,19 +1945,19 @@ class RotorRepository(context: android.content.Context) {
         val dipole = s.selectedDipole
         val offset = s.selectedOffsetDeg
         val currentRotor = s.azDeg
-        val target = AntennaMath.rotorAzForDisplayBearing(
+        val bearingTarget = AntennaMath.rotorAzForDisplayBearing(
             displayBearingDeg = display,
             offsetDeg = offset,
-            currentRotorAz = currentRotor,
+            currentRotorAz = currentRotor?.let { AntennaMath.wrap360(it) },
             dipole = dipole,
             lastRotorAz = if (dipole) azDipoleLastRotorAz else null,
         )
+        // Overlap-Rotor: Stellung eine Umdrehung weiter kann der kürzere Weg sein.
+        val target = AntennaMath.nearestReachable(bearingTarget, currentRotor, s.azMaxDeg)
         // UI sofort: Sollnadel + moving, bevor ACK kommt
         val lobe = if (dipole) {
             val primary = AntennaMath.rotorFromDisplay(display, offset)
-            if (kotlin.math.abs(AntennaMath.wrap360(target - primary) - 180.0) < 1.0 ||
-                kotlin.math.abs(target - AntennaMath.wrap360(primary + 180.0)) < 1.0
-            ) {
+            if (kotlin.math.abs(AntennaMath.wrap360(bearingTarget - primary) - 180.0) < 1.0) {
                 "Gegenkeule"
             } else {
                 "Hauptkeule"
@@ -1903,7 +1966,7 @@ class RotorRepository(context: android.content.Context) {
             null
         }
         if (dipole) {
-            azDipoleLastRotorAz = target
+            azDipoleLastRotorAz = bearingTarget
         } else {
             azDipoleLastRotorAz = null
         }
@@ -2858,6 +2921,7 @@ class RotorRepository(context: android.content.Context) {
         val azType = runCatching {
             client.getRotorType(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
         }.getOrNull()
+        queryAzMaxDegLocked()
         val elType = if (profile.enableEl) {
             runCatching {
                 client.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
@@ -2889,6 +2953,29 @@ class RotorRepository(context: android.content.Context) {
         )
     }
 
+    /**
+     * GETMAXDG am AZ — entscheidet, ob Ziele eine Umdrehung weiter liegen dürfen.
+     * Ohne Antwort bleibt der Cache stehen (kein Rückfall auf 360°).
+     */
+    private suspend fun queryAzMaxDegLocked() {
+        if (!_state.value.azOnline) return
+        val max = runCatching {
+            client.getMaxDg(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+        }.getOrNull() ?: return
+        val clamped = max.coerceIn(360.0, 1080.0)
+        rememberAzMaxDegIfChanged(clamped)
+        _state.value = _state.value.copy(
+            azMaxDeg = clamped,
+            lastLog = "GETMAXDG AZ=${"%.0f".format(clamped)}°",
+        )
+    }
+
+    private fun rememberAzMaxDegIfChanged(max: Double) {
+        if (abs(max - profile.cachedAzMaxDeg()) < 0.5) return
+        profile = profile.copy(lastAzMaxDeg = max)
+        onAzMaxDegCached?.invoke(profile)
+    }
+
     private fun rememberElRotorTypeIfChanged(elType: Int?) {
         if (!profile.enableEl || elType == null) return
         val t = elType.coerceIn(2, 3)
@@ -2905,5 +2992,14 @@ class RotorRepository(context: android.content.Context) {
     private fun clampEl(deg: Double): Double =
         deg.coerceIn(0.0, _state.value.elMaxDeg.coerceIn(90.0, 180.0))
 
-    private fun wrapAz(deg: Double): Double = AntennaMath.wrap360(deg)
+    /**
+     * Rotorwinkel in den Fahrbereich bringen.
+     * Nur beim 360°-Rotor wird gewrappt — bei Overlap-Rotoren wäre 400° sonst
+     * fälschlich 40° und damit eine ganz andere Stellung.
+     */
+    private fun wrapAz(deg: Double): Double {
+        val max = _state.value.azMaxDeg
+        if (max <= 360.5) return AntennaMath.wrap360(deg)
+        return deg.coerceIn(0.0, max)
+    }
 }

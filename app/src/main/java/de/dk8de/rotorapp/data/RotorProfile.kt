@@ -25,6 +25,11 @@ data class RotorProfile(
      * Beim Start sofort für die Anzeige nutzen, damit die GUI nicht flackert.
      */
     val lastElRotorType: Int = 2,
+    /**
+     * Zuletzt gelesener AZ-Fahrbereich (GETMAXDG). Beim Start sofort nutzen,
+     * damit die erste Fahrt schon den kürzeren Weg über 360° nehmen kann.
+     */
+    val lastAzMaxDeg: Double = 360.0,
 ) {
     fun summary(azElLabel: String, azOnlyLabel: String, windSuffix: String): String {
         val el = if (enableEl) azElLabel else azOnlyLabel
@@ -39,4 +44,7 @@ data class RotorProfile(
     }
 
     fun cachedElRotorType(): Int = if (!enableEl) 2 else lastElRotorType.coerceIn(2, 3)
+
+    /** AZ-Fahrbereich aus Cache (ohne Bus-Abfrage), begrenzt auf plausible Werte. */
+    fun cachedAzMaxDeg(): Double = lastAzMaxDeg.coerceIn(360.0, 1080.0)
 }
