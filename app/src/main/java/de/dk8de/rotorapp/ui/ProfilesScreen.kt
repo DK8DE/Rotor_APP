@@ -1029,6 +1029,9 @@ private fun ProfileEditor(
     var masterId by remember { mutableStateOf(initial.masterId.toString()) }
     var slaveAz by remember { mutableStateOf(initial.slaveAz.toString()) }
     var slaveEl by remember { mutableStateOf(initial.slaveEl.toString()) }
+    var elOwnLink by remember { mutableStateOf(initial.elOwnLink) }
+    var elHost by remember { mutableStateOf(initial.elHost) }
+    var elPort by remember { mutableStateOf(initial.elPort.toString()) }
     var controllerId by remember { mutableStateOf(initial.controllerId.toString()) }
     var enableEl by remember { mutableStateOf(initial.enableEl) }
     var enableWind by remember { mutableStateOf(initial.enableWind) }
@@ -1049,6 +1052,9 @@ private fun ProfileEditor(
                 slaveAz = slaveAz.toIntOrNull() ?: 20,
                 enableEl = enableEl,
                 slaveEl = slaveEl.toIntOrNull() ?: 21,
+                elOwnLink = enableEl && elOwnLink,
+                elHost = elHost.trim(),
+                elPort = elPort.toIntOrNull() ?: 8886,
                 controllerId = controllerId.toIntOrNull() ?: 2,
                 enableWind = enableWind,
                 windDirMode = if (enableWind && windDirMode == "to") "to" else "from",
@@ -1145,6 +1151,32 @@ private fun ProfileEditor(
                     keyboardType = KeyboardType.Number,
                     keyboardActions = saveActions,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = elOwnLink, onCheckedChange = { elOwnLink = it })
+                    Column {
+                        Text(stringResource(R.string.checkbox_el_own_link), color = BridgeText)
+                        Text(
+                            stringResource(R.string.el_own_link_hint),
+                            color = BridgeMuted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if (elOwnLink) {
+                    ProfileField(
+                        value = elHost,
+                        onValueChange = { elHost = it },
+                        label = stringResource(R.string.field_el_host),
+                        keyboardActions = saveActions,
+                    )
+                    ProfileField(
+                        value = elPort,
+                        onValueChange = { elPort = it.filter { ch -> ch.isDigit() } },
+                        label = stringResource(R.string.field_el_port),
+                        keyboardType = KeyboardType.Number,
+                        keyboardActions = saveActions,
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = enableWind, onCheckedChange = { enableWind = it })

@@ -354,6 +354,9 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
             p.slaveAz,
             p.enableEl,
             p.slaveEl,
+            p.elOwnLink,
+            p.elHost,
+            p.elPort,
             p.controllerId,
             // enableWind bewusst nicht: wird per GETWINDENABLE vom Rotor gesetzt
         ).joinToString("|")

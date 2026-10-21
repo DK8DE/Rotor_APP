@@ -1,4 +1,4 @@
-package de.dk8de.rotorapp.rotor
+﻿package de.dk8de.rotorapp.rotor
 
 import android.os.SystemClock
 import de.dk8de.rotorapp.R
@@ -342,12 +342,46 @@ class RotorRepository(context: android.content.Context) {
     private val client = RotorClient(link).also { c ->
         c.onBusTelegram = { tel -> onBusTelegram(tel) }
     }
+
+    /**
+     * Zweite Verbindung, wenn EL an einer eigenen Bridge hängt.
+     * Ohne eigene EL-Adresse bleibt sie ungenutzt und [elClient] zeigt auf [client].
+     */
+    private val elLink = TcpLink(appCtx)
+    private val elClientSeparate = RotorClient(elLink).also { c ->
+        c.onBusTelegram = { tel -> onBusTelegram(tel, elBus = true) }
+    }
+
+    /** Gilt für das aktive Profil: EL braucht eine eigene Verbindung. */
+    @Volatile
+    private var useElLink: Boolean = false
+
+    /** Bus-Zugang der EL-Achse — eigene Bridge oder derselbe Bus wie AZ. */
+    private val elClient: RotorClient
+        get() = if (useElLink) elClientSeparate else client
+
+    /** Mindestens eine Bridge ist erreichbar. */
+    private val anyLinkUp: Boolean
+        get() = client.isConnected || (useElLink && elClientSeparate.isConnected)
+
+    private fun clientFor(axis: RotorAxis): RotorClient =
+        if (axis == RotorAxis.EL) elClient else client
+
     private val ioMutex = Mutex()
 
     init {
         // Socket tot (WLAN weg) → UI-State sofort „getrennt“, damit der Poll-Job reconnectet
         link.onDisconnected = {
-            markLinkLost("TCP getrennt")
+            // Steht die eigene EL-Bridge noch, geht nur die AZ-Achse verloren.
+            if (useElLink && elClientSeparate.isConnected) {
+                markAzLinkLost("TCP AZ getrennt")
+            } else {
+                markLinkLost("TCP getrennt")
+            }
+        }
+        elLink.onDisconnected = {
+            // Nur die EL-Achse verlieren — AZ läuft an der anderen Bridge weiter.
+            if (useElLink) markElLinkLost("TCP EL getrennt")
         }
     }
 
@@ -359,10 +393,16 @@ class RotorRepository(context: android.content.Context) {
     private var profile: RotorProfile = RotorProfile()
     private var lastHost: String = profile.host
     private var lastPort: Int = profile.port
+    private var lastElHost: String = ""
+    private var lastElPort: Int = 0
 
     /** Aktuelle Watchdog-Schwelle (steigt, wenn Reconnect nichts bringt). */
     @Volatile
     private var linkSilenceLimitMs: Long = LINK_SILENCE_MS
+
+    /** Dasselbe für die eigene EL-Bridge. */
+    @Volatile
+    private var elSilenceLimitMs: Long = LINK_SILENCE_MS
 
     /** Wenn GETROTORTYPE einen neuen EL-Typ liefert: Profil-Cache speichern. */
     var onElRotorTypeCached: ((RotorProfile) -> Unit)? = null
@@ -428,13 +468,27 @@ class RotorRepository(context: android.content.Context) {
     /** Touch/GO: Polling abbrechen, Bus sofort für SETPOS freigeben. */
     fun beginUserCommand() {
         userCmdPending = true
-        client.requestAbortAwait()
+        requestAbortAwaitAll()
     }
 
     fun endUserCommand() {
-        client.clearAbortAwait()
+        clearAbortAwaitAll()
         userCmdPending = false
     }
+
+    private fun requestAbortAwaitAll() {
+        client.requestAbortAwait()
+        if (useElLink) elClientSeparate.requestAbortAwait()
+    }
+
+    private fun clearAbortAwaitAll() {
+        client.clearAbortAwait()
+        if (useElLink) elClientSeparate.clearAbortAwait()
+    }
+
+    /** Laufendes Warten wurde abgebrochen (auf einer der beiden Verbindungen). */
+    private val isAwaitAborted: Boolean
+        get() = client.isAwaitAborted || (useElLink && elClientSeparate.isAwaitAborted)
 
     fun isMotionHoldActive(): Boolean =
         SystemClock.elapsedRealtime() < motionHoldUntilMs
@@ -551,12 +605,15 @@ class RotorRepository(context: android.content.Context) {
     fun activeProfile(): RotorProfile = profile
 
     suspend fun applyProfile(p: RotorProfile, reconnect: Boolean) {
-        val wasConnected = client.isConnected
+        val wasConnected = anyLinkUp
         if (wasConnected) {
             runCatching { client.disconnect() }
+            runCatching { elClientSeparate.disconnect() }
         }
         profile = p
+        useElLink = p.elSeparateLink()
         client.masterId = p.masterId
+        elClientSeparate.masterId = p.masterId
         azSmoother.clear()
         elSmoother.clear()
         resetAxisHealth()
@@ -609,6 +666,42 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
+    /**
+     * Socket aufbauen (ein bestehender wird dabei ersetzt).
+     * @return Fehlertext, oder null wenn die Verbindung steht.
+     */
+    private suspend fun openLink(c: RotorClient, host: String, port: Int): String? {
+        return try {
+            c.connect(host, port)
+            null
+        } catch (e: Exception) {
+            e.message ?: e.toString()
+        }
+    }
+
+    /** Zweite Bridge für EL verbinden (oder freigeben, wenn nicht mehr nötig). */
+    private suspend fun openElLinkLocked(): String? {
+        if (!useElLink) {
+            if (elClientSeparate.isConnected) runCatching { elClientSeparate.disconnect() }
+            lastElHost = ""
+            lastElPort = 0
+            return null
+        }
+        val eh = profile.elHostEffective()
+        val ep = profile.elPortEffective()
+        val err = openLink(elClientSeparate, eh, ep)
+        lastElHost = eh
+        lastElPort = ep
+        return err
+    }
+
+    private fun linkStatusLog(): String = when {
+        !useElLink -> "TCP OK"
+        client.isConnected && elClientSeparate.isConnected -> "TCP OK (AZ+EL)"
+        client.isConnected -> "TCP OK (nur AZ)"
+        else -> "TCP OK (nur EL)"
+    }
+
     suspend fun connect(
         host: String? = null,
         port: Int? = null,
@@ -616,17 +709,23 @@ class RotorRepository(context: android.content.Context) {
     ): Boolean = ioMutex.withLock {
         val h = host ?: profile.host
         val p = port ?: profile.port
-        lastHost = h
-        lastPort = p
+        useElLink = profile.elSeparateLink()
         return try {
-            client.connect(h, p)
+            val azErr = openLink(client, h, p)
+            lastHost = h
+            lastPort = p
+            val elErr = openElLinkLocked()
+            // Eine erreichbare Bridge genügt — die andere Achse bleibt offline.
+            if (!anyLinkUp) {
+                error(listOfNotNull(azErr, elErr).joinToString(" / ").ifBlank { "offline" })
+            }
             resetAxisHealth()
             // Verhindert, dass onForeground den frischen Connect sofort als „stale“ killt
             lastOkPollMs = System.currentTimeMillis()
             _state.value = _state.value.copy(
                 connected = true,
                 statusText = "",
-                lastLog = "TCP OK",
+                lastLog = linkStatusLog(),
                 azOnline = false,
                 elOnline = false,
                 busPassive = false,
@@ -677,6 +776,7 @@ class RotorRepository(context: android.content.Context) {
             true
         } catch (e: Exception) {
             runCatching { client.disconnect() }
+            runCatching { elClientSeparate.disconnect() }
             _state.value = _state.value.copy(
                 connected = false,
                 statusText = if (quietFail) "" else str(R.string.status_connection_failed),
@@ -710,6 +810,7 @@ class RotorRepository(context: android.content.Context) {
 
     suspend fun disconnect() = ioMutex.withLock {
         client.disconnect()
+        runCatching { elClientSeparate.disconnect() }
         azSmoother.clear()
         elSmoother.clear()
         resetAxisHealth()
@@ -764,7 +865,7 @@ class RotorRepository(context: android.content.Context) {
     suspend fun ensureConnectedOrReconnect(staleAfterMs: Long = 15_000L): Boolean {
         syncLinkState()
         val now = System.currentTimeMillis()
-        if (client.isConnected && _state.value.connected) {
+        if (anyLinkUp && _state.value.connected) {
             val neverPolled = lastOkPollMs == 0L
             val fresh = !neverPolled && now - lastOkPollMs <= staleAfterMs
             if (neverPolled || fresh) return true
@@ -772,7 +873,7 @@ class RotorRepository(context: android.content.Context) {
             // wegzuwerfen — nach App-Wechsel ist sie meist völlig in Ordnung.
             if (probeLink()) return true
         }
-        if (client.isConnected) {
+        if (anyLinkUp) {
             runCatching { disconnect() }
         }
         return connect(lastHost.ifBlank { profile.host }, lastPort, quietFail = true)
@@ -783,7 +884,7 @@ class RotorRepository(context: android.content.Context) {
      * @return true, wenn eine Achse geantwortet hat.
      */
     private suspend fun probeLink(): Boolean {
-        if (!client.isConnected) return false
+        if (!anyLinkUp) return false
         val before = lastOkPollMs
         ioMutex.withLock {
             runCatching { pollPositionsLocked(expectedPeriodS = 0.3f) }
@@ -802,12 +903,13 @@ class RotorRepository(context: android.content.Context) {
      */
     fun resumeLinkWatchdog() {
         client.markLinkActive()
+        elClientSeparate.markLinkActive()
         linkSilenceLimitMs = LINK_SILENCE_MS
     }
 
     /** TCP-Flag und UI-State angleichen (Socket kann tot sein, UI noch „verbunden“). */
     fun syncLinkState() {
-        if (_state.value.connected && !client.isConnected) {
+        if (_state.value.connected && !anyLinkUp) {
             markLinkLost("TCP tot")
         }
     }
@@ -818,7 +920,9 @@ class RotorRepository(context: android.content.Context) {
      * Byte, wird hart getrennt, damit der Poll-Job neu verbinden kann.
      */
     suspend fun checkLinkAlive() {
-        if (!_state.value.connected || !client.isConnected) return
+        if (!_state.value.connected) return
+        checkElLinkAlive()
+        if (!client.isConnected) return
         val silent = client.linkSilenceMs
         if (silent < 2_000L) {
             // Es fließen Daten → Verbindung gesund, Watchdog wieder scharf stellen.
@@ -832,17 +936,50 @@ class RotorRepository(context: android.content.Context) {
             return
         }
         runCatching { client.disconnect() }
-        markLinkLost("Keine Daten seit ${silent / 1000}s → Reconnect")
+        val reason = "Keine Daten seit ${silent / 1000}s → Reconnect"
+        // Eigene EL-Bridge antwortet noch → nur AZ fallen lassen, EL weiterlaufen lassen.
+        if (useElLink && elClientSeparate.isConnected) {
+            markAzLinkLost(reason)
+        } else {
+            markLinkLost(reason)
+        }
         // Bridge erreichbar, aber Bus stumm (alle Achsen aus): nicht endlos im
         // 12-s-Takt neu verbinden, sondern Abstand vergrößern.
         linkSilenceLimitMs = (linkSilenceLimitMs * 2).coerceAtMost(60_000L)
     }
 
-    val isTcpUp: Boolean get() = client.isConnected && _state.value.connected
+    /**
+     * Eigene EL-Bridge getrennt überwachen — eine stumme EL-Bridge darf die
+     * laufende AZ-Verbindung nicht mitreißen.
+     */
+    private suspend fun checkElLinkAlive() {
+        if (!useElLink || !elClientSeparate.isConnected) return
+        val silent = elClientSeparate.linkSilenceMs
+        if (silent < 2_000L) {
+            elSilenceLimitMs = LINK_SILENCE_MS
+            return
+        }
+        if (silent < elSilenceLimitMs) return
+        val answered = ioMutex.withLock {
+            runCatching {
+                elClientSeparate.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
+            }.getOrNull() != null
+        }
+        if (answered) {
+            elSilenceLimitMs = LINK_SILENCE_MS
+            return
+        }
+        runCatching { elClientSeparate.disconnect() }
+        markElLinkLost("EL: keine Daten seit ${silent / 1000}s")
+        elSilenceLimitMs = (elSilenceLimitMs * 2).coerceAtMost(60_000L)
+    }
+
+    /** Mindestens eine Bridge steht — sonst baut der Poll-Job neu auf. */
+    val isTcpUp: Boolean get() = anyLinkUp && _state.value.connected
 
     private fun markLinkLost(reason: String) {
         val prev = _state.value
-        if (!prev.connected && !client.isConnected) return
+        if (!prev.connected && !anyLinkUp) return
         azSmoother.clear()
         elSmoother.clear()
         _state.value = prev.copy(
@@ -861,6 +998,35 @@ class RotorRepository(context: android.content.Context) {
             elSmoothDeg = null,
         )
     }
+
+    /** Nur die AZ-Bridge ist weg — EL läuft an der eigenen Bridge weiter. */
+    private fun markAzLinkLost(reason: String) {
+        val prev = _state.value
+        if (!prev.azOnline && prev.azDeg == null) return
+        azSmoother.clear()
+        _state.value = prev.copy(
+            azOnline = false,
+            azHoming = false,
+            azDeg = null,
+            azSmoothDeg = null,
+            lastLog = reason,
+        )
+    }
+
+    /** Nur die EL-Bridge ist weg — AZ läuft weiter. */
+    private fun markElLinkLost(reason: String) {
+        val prev = _state.value
+        if (!prev.elOnline && prev.elDeg == null) return
+        elSmoother.clear()
+        _state.value = prev.copy(
+            elOnline = false,
+            elHoming = false,
+            elDeg = null,
+            elSmoothDeg = null,
+            lastLog = reason,
+        )
+    }
+
     /**
      * Render-Tick wie Bridge-Kompass (~33 ms): SmoothDamp/Segment-Lerp fortschreiben.
      * Standzeit-Ring: bei Stillstand Sektor akkumulieren.
@@ -908,7 +1074,7 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun refreshAccBins(force: Boolean = false) {
-        if (!client.isConnected || !wantStromRing) return
+        if (!anyLinkUp || !wantStromRing) return
         if (userCmdPending || (!force && idleExtrasDeferred())) return
         val s = _state.value
         if (s.moving || s.homing) return
@@ -933,10 +1099,10 @@ class RotorRepository(context: android.content.Context) {
             } else {
                 null
             }
-            if (userCmdPending || client.isAwaitAborted) return
+            if (userCmdPending || isAwaitAborted) return
             val binsEl = if (elOk) {
                 runCatching {
-                    client.getAccBinsFull(profile.slaveEl, timeoutMs = 450)
+                    elClient.getAccBinsFull(profile.slaveEl, timeoutMs = 450)
                 }.getOrNull()?.let { AntennaMath.mergeAccEl36(it.first, it.second) }
             } else {
                 null
@@ -963,7 +1129,7 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun resetAccBins() = ioMutex.withLock {
-        if (!client.isConnected) return@withLock
+        if (!anyLinkUp) return@withLock
         val s = _state.value
         val okAz = if (s.azOnline) {
             runCatching { client.resetAccBins(profile.slaveAz) }.getOrDefault(false)
@@ -971,7 +1137,7 @@ class RotorRepository(context: android.content.Context) {
             false
         }
         val okEl = if (profile.enableEl && s.elOnline) {
-            runCatching { client.resetAccBins(profile.slaveEl) }.getOrDefault(false)
+            runCatching { elClient.resetAccBins(profile.slaveEl) }.getOrDefault(false)
         } else {
             !profile.enableEl
         }
@@ -1018,7 +1184,7 @@ class RotorRepository(context: android.content.Context) {
         lastWindFetchMs = now
         val dst = profile.slaveAz
         val en = runCatching { client.getWindEnable(dst, timeoutMs = 500) }.getOrNull()
-        if (!force && (userCmdPending || client.isAwaitAborted)) return
+        if (!force && (userCmdPending || isAwaitAborted)) return
         if (en != true) {
             _state.value = _state.value.copy(
                 windHwEnabled = en == true,
@@ -1029,7 +1195,7 @@ class RotorRepository(context: android.content.Context) {
             return
         }
         val kmh = runCatching { client.getAnemo(dst, timeoutMs = 500) }.getOrNull()
-        if (!force && (userCmdPending || client.isAwaitAborted)) return
+        if (!force && (userCmdPending || isAwaitAborted)) return
         val dir = runCatching { client.getWindDir(dst, timeoutMs = 500) }.getOrNull()
         if (!force && userCmdPending) return
         _state.value = _state.value.copy(
@@ -1047,12 +1213,14 @@ class RotorRepository(context: android.content.Context) {
 
     /** Passiv Bus mitlauschen (SETPOSCC / fremdes SETPOSDG / SETASELECT / …). */
     suspend fun sniffBus(waitMs: Long = 40) {
-        if (!client.isConnected) return
+        if (!anyLinkUp) return
         // Auch während Fast-Poll/Motion-Hold drainen, sobald der Mutex frei ist —
         // sonst gehen fremde SETASELECT zwischen den Polls verloren.
         if (!ioMutex.tryLock()) return
         try {
-            client.drainBus(waitMs)
+            if (client.isConnected) client.drainBus(waitMs)
+            // Eigene EL-Bridge hat einen eigenen Bus — dort ebenfalls mithören.
+            if (useElLink && elClientSeparate.isConnected) elClientSeparate.drainBus(waitMs)
             if (pendingAntennaSelectRefresh && _state.value.azOnline) {
                 pendingAntennaSelectRefresh = false
                 refreshAntennaSelectLocked()
@@ -1062,34 +1230,47 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
-    private fun onBusTelegram(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun onBusTelegram(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean = false) {
         val cmd = tel.cmd.trim().uppercase()
         when {
-            cmd == "SETPOSCC" -> applySetPosCc(tel)
-            cmd == "SETPOSDG" -> applySetPosDgFromBus(tel)
-            cmd.startsWith("ACK_SETPOSDG") -> applyAckSetPosDgFromBus(tel)
+            cmd == "SETPOSCC" -> applySetPosCc(tel, elBus)
+            cmd == "SETPOSDG" -> applySetPosDgFromBus(tel, elBus)
+            cmd.startsWith("ACK_SETPOSDG") -> applyAckSetPosDgFromBus(tel, elBus)
             cmd == "SETASELECT" ||
                 cmd.startsWith("ACK_GETASELECT") ||
-                cmd.startsWith("ACK_SETASELECT") -> applyAntennaSelectFromBus(tel)
+                cmd.startsWith("ACK_SETASELECT") -> applyAntennaSelectFromBus(tel, elBus)
             cmd == "SETPWM" || cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM") ->
-                applyPwmFromBus(tel)
-            cmd == "STOP" -> applyStopFromBus(tel)
-            cmd == "SETREF" || cmd.startsWith("ACK_SETREF") -> applySetRefFromBus(tel)
+                applyPwmFromBus(tel, elBus)
+            cmd == "STOP" -> applyStopFromBus(tel, elBus)
+            cmd == "SETREF" || cmd.startsWith("ACK_SETREF") -> applySetRefFromBus(tel, elBus)
             cmd == "ERR" || cmd.startsWith("ACK_GETERR") || cmd.startsWith("ACK_ERR") ->
-                applyErrFromBus(tel)
-            cmd == "WARN" || cmd.startsWith("ACK_GETWARN") -> applyWarnFromBus(tel)
-            cmd.startsWith("ACK_GETPOSDG") || cmd.startsWith("ACK_POSDG") -> applyPosAckFromBus(tel)
+                applyErrFromBus(tel, elBus)
+            cmd == "WARN" || cmd.startsWith("ACK_GETWARN") -> applyWarnFromBus(tel, elBus)
+            cmd.startsWith("ACK_GETPOSDG") || cmd.startsWith("ACK_POSDG") ->
+                applyPosAckFromBus(tel, elBus)
         }
     }
+
+    /**
+     * Slave-ID der Achse auf dem Bus, von dem das Telegramm kam.
+     *
+     * Bei eigener EL-Bridge sind es zwei getrennte Busse: Die AZ-Achse kann dort
+     * nicht antworten (und umgekehrt) — sonst würden gleiche Slave-IDs auf beiden
+     * Bridges vertauscht. −1 trifft auf keine echte Adresse zu.
+     */
+    private fun azIdForBus(elBus: Boolean): Int = if (elBus) -1 else profile.slaveAz
+
+    private fun elIdForBus(elBus: Boolean): Int =
+        if (useElLink && !elBus) -1 else profile.slaveEl
 
     /**
      * Fremdes SETPWM / ACK_SETPWM / ACK_GETPWM → Slider anhand Slave-ID (Profil AZ/EL).
      * Eigenes Echo (src==master bzw. ACK an uns) ignorieren — State schon gesetzt.
      */
-    private fun applyPwmFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun applyPwmFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
         val cmd = tel.cmd.trim().uppercase()
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         val isSet = cmd == "SETPWM"
         val isAck = cmd.startsWith("ACK_SETPWM") || cmd.startsWith("ACK_GETPWM")
         if (!isSet && !isAck) return
@@ -1135,7 +1316,12 @@ class RotorRepository(context: android.content.Context) {
      * ACK_SETASELECT / ACK_GETASELECT vom AZ → Auswahl in der UI übernehmen.
      * Quelle kann jeder andere Master sein (andere Bus-ID).
      */
-    private fun applyAntennaSelectFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun applyAntennaSelectFromBus(
+        tel: de.dk8de.rotorapp.protocol.Telegram,
+        elBus: Boolean,
+    ) {
+        // Antennenauswahl hängt am AZ-Rotor — Telegramme der EL-Bridge gehen uns nichts an.
+        if (elBus) return
         val cmd = tel.cmd.trim().uppercase()
         val saz = profile.slaveAz
         val isSet = cmd == "SETASELECT"
@@ -1187,11 +1373,11 @@ class RotorRepository(context: android.content.Context) {
      * SETPOSCC = Fernbedienung-Vorschau: nur Sollzeiger, kein SETPOSDG, nicht passiv.
      * Die Fernbedienung sendet SETPOSDG selbst; die App pollt weiter aktiv.
      */
-    private fun applySetPosCc(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun applySetPosCc(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
         val (angle, rid) = de.dk8de.rotorapp.protocol.Rs485Protocol.parseSetPosCc(tel.params)
         if (angle == null) return
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
 
         // DST egal — Achse nur aus ;rotor_id (wie #2:7:SETPOSCC:154,60;20:…)
         val axis = when {
@@ -1224,9 +1410,9 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
-    private fun applySetPosDgFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+    private fun applySetPosDgFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         if (tel.dst != saz && !(profile.enableEl && tel.dst == sel)) return
         // Eigenes Echo: src == master — Zustand haben wir schon gesetzt
         if (tel.src == profile.masterId) return
@@ -1240,9 +1426,9 @@ class RotorRepository(context: android.content.Context) {
      * Fremdes ACK_SETPOSDG (Antwort an anderen Master, z. B. Bridge `#20:0:ACK_SETPOSDG:…`).
      * Die App sieht oft nur das ACK auf dem Bus, nicht den TX-SETPOSDG der Bridge.
      */
-    private fun applyAckSetPosDgFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+    private fun applyAckSetPosDgFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         if (tel.src != saz && !(profile.enableEl && tel.src == sel)) return
         // Eigenes ACK an unseren Master — setAzimuth hat den Zustand schon gesetzt
         if (tel.dst == profile.masterId) return
@@ -1292,7 +1478,7 @@ class RotorRepository(context: android.content.Context) {
     }
 
     /** Positions-ACK an beliebigen Master — nur im Passiv-Modus (fremdes Polling). */
-    private fun applyPosAckFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun applyPosAckFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
         // Aktives eigenes GETPOSDG aktualisiert den Smoother in pollPositions.
         // Hier mitlaufen würde EL doppelt (Bus-ACK + poll) mit ~0 ms Abstand → Ruckler.
         if (!_state.value.busPassive) return
@@ -1300,7 +1486,7 @@ class RotorRepository(context: android.content.Context) {
         val now = SystemClock.elapsedRealtime()
         val cur = _state.value
         when (tel.src) {
-            profile.slaveAz -> {
+            azIdForBus(elBus) -> {
                 azFailStreak = 0
                 lastOkPollMs = System.currentTimeMillis()
                 azSmoother.setDynamic(cur.moving || cur.busPassive)
@@ -1323,7 +1509,7 @@ class RotorRepository(context: android.content.Context) {
                     },
                 )
             }
-            profile.slaveEl -> {
+            elIdForBus(elBus) -> {
                 if (!profile.enableEl) return
                 elFailStreak = 0
                 lastOkPollMs = System.currentTimeMillis()
@@ -1350,9 +1536,9 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
-    private fun applyStopFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+    private fun applyStopFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         if (tel.dst != saz && !(profile.enableEl && tel.dst == sel)) return
         if (tel.src == profile.masterId) return
         val prev = _state.value
@@ -1372,11 +1558,11 @@ class RotorRepository(context: android.content.Context) {
      * Anderer Controller: SETREF:1 / ACK_SETREF → Homing-UI wie bei eigenem HOME
      * (sonst zeigt GETREF=0 nur „nicht referenziert“).
      */
-    private fun applySetRefFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
+    private fun applySetRefFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
         val cmd = tel.cmd.trim().uppercase()
         val isAck = cmd.startsWith("ACK_SETREF")
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
 
         val axis = when {
             !isAck && tel.dst == saz -> RotorAxis.AZ
@@ -1432,9 +1618,9 @@ class RotorRepository(context: android.content.Context) {
     /**
      * Broadcast `#SRC:255:ERR:code:CS$` oder ACK_GETERR — Motor gestoppt, Fehler gelatched.
      */
-    private fun applyErrFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+    private fun applyErrFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         val src = tel.src
         val axis = when {
             src == saz -> RotorAxis.AZ
@@ -1482,9 +1668,9 @@ class RotorRepository(context: android.content.Context) {
     }
 
     /** WARN-Broadcast oder ACK_GETWARN vom Slave. */
-    private fun applyWarnFromBus(tel: de.dk8de.rotorapp.protocol.Telegram) {
-        val saz = profile.slaveAz
-        val sel = profile.slaveEl
+    private fun applyWarnFromBus(tel: de.dk8de.rotorapp.protocol.Telegram, elBus: Boolean) {
+        val saz = azIdForBus(elBus)
+        val sel = elIdForBus(elBus)
         val src = tel.src
         val axis = when {
             src == saz -> RotorAxis.AZ
@@ -1530,7 +1716,7 @@ class RotorRepository(context: android.content.Context) {
         prev.copy(busPassive = false)
 
     suspend fun pollPositions(expectedPeriodS: Float = 0.25f) {
-        if (!client.isConnected) return
+        if (!anyLinkUp) return
         if (_state.value.busPassive) return
         if (userCmdPending) return
         // Immer warten: Idle-GETPOS 1×/s darf nicht an Temp/Wind/ACC/Sniff scheitern
@@ -1573,11 +1759,11 @@ class RotorRepository(context: android.content.Context) {
             if (elBusy && !azBusy) {
                 if (pollElPrimary) {
                     el = runCatching {
-                        client.getPosDg(profile.slaveEl, timeoutMs = posTo)
+                        elClient.getPosDg(profile.slaveEl, timeoutMs = posTo)
                     }.getOrNull()
                     if (el != null) elSampleMs = SystemClock.elapsedRealtime()
                 }
-                if (userCmdPending || client.isAwaitAborted) return
+                if (userCmdPending || isAwaitAborted) return
                 if (pollAzKeepalive) {
                     lastAzKeepaliveMs = SystemClock.elapsedRealtime()
                     az = runCatching {
@@ -1592,11 +1778,11 @@ class RotorRepository(context: android.content.Context) {
                     }.getOrNull()
                     if (az != null) azSampleMs = SystemClock.elapsedRealtime()
                 }
-                if (userCmdPending || client.isAwaitAborted) return
+                if (userCmdPending || isAwaitAborted) return
                 if (pollElKeepalive) {
                     lastElKeepaliveMs = SystemClock.elapsedRealtime()
                     el = runCatching {
-                        client.getPosDg(profile.slaveEl, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
+                        elClient.getPosDg(profile.slaveEl, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
                     }.getOrNull()
                     if (el != null) elSampleMs = SystemClock.elapsedRealtime()
                 }
@@ -1607,15 +1793,15 @@ class RotorRepository(context: android.content.Context) {
                     }.getOrNull()
                     if (az != null) azSampleMs = SystemClock.elapsedRealtime()
                 }
-                if (userCmdPending || client.isAwaitAborted) return
+                if (userCmdPending || isAwaitAborted) return
                 if (pollElPrimary) {
                     el = runCatching {
-                        client.getPosDg(profile.slaveEl, timeoutMs = posTo)
+                        elClient.getPosDg(profile.slaveEl, timeoutMs = posTo)
                     }.getOrNull()
                     if (el != null) elSampleMs = SystemClock.elapsedRealtime()
                 }
             }
-            if (userCmdPending || client.isAwaitAborted) return
+            if (userCmdPending || isAwaitAborted) return
 
             val cur = _state.value
             var azOnline = cur.azOnline
@@ -1755,7 +1941,7 @@ class RotorRepository(context: android.content.Context) {
      * Offline-Achsen alle 5 s mit kurzem GETREF anpingen — sobald Antwort kommt → online.
      */
     suspend fun probeOfflineAxes() {
-        if (!client.isConnected) return
+        if (!anyLinkUp) return
         if (_state.value.busPassive) return
         if (userCmdPending) return
         if (!ioMutex.tryLock()) return
@@ -1767,15 +1953,42 @@ class RotorRepository(context: android.content.Context) {
         }
     }
 
+    /**
+     * Fehlende Bridge im Offline-Takt neu aufbauen.
+     *
+     * Eine tote Bridge soll die andere nicht mitreißen: Statt alles abzureißen
+     * wird hier nur der fehlende Socket nachgezogen.
+     */
+    private suspend fun reopenLinksLocked(nowWall: Long) {
+        if (!client.isConnected && nowWall >= nextAzProbeMs) {
+            nextAzProbeMs = nowWall + OFFLINE_RETRY_MS
+            val err = openLink(client, lastHost.ifBlank { profile.host }, lastPort)
+            if (err == null) {
+                client.markLinkActive()
+                linkSilenceLimitMs = LINK_SILENCE_MS
+                _state.value = _state.value.copy(lastLog = linkStatusLog())
+            }
+        }
+        if (useElLink && !elClientSeparate.isConnected && nowWall >= nextElProbeMs) {
+            nextElProbeMs = nowWall + OFFLINE_RETRY_MS
+            if (openElLinkLocked() == null) {
+                elClientSeparate.markLinkActive()
+                elSilenceLimitMs = LINK_SILENCE_MS
+                _state.value = _state.value.copy(lastLog = linkStatusLog())
+            }
+        }
+    }
+
     private suspend fun probeOfflineAxesLocked() {
         val before = _state.value
         // Während Fahrt / kurz nach SETPOS / Homing: Offline NICHT anfassen (Deadman der Online-Achse)
         if (before.homing || before.moving || before.busPassive) return
         if (isMotionHoldActive() || idleExtrasDeferred()) return
         val nowWall = SystemClock.elapsedRealtime()
+        reopenLinksLocked(nowWall)
         var cur = _state.value
 
-        if (!cur.azOnline && nowWall >= nextAzProbeMs) {
+        if (!cur.azOnline && client.isConnected && nowWall >= nextAzProbeMs) {
             val azRef = runCatching {
                 client.getRef(profile.slaveAz, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
             }.getOrNull()
@@ -1823,16 +2036,18 @@ class RotorRepository(context: android.content.Context) {
             }
         }
 
-        if (profile.enableEl && !cur.elOnline && nowWall >= nextElProbeMs) {
+        if (profile.enableEl && !cur.elOnline && elClient.isConnected &&
+            nowWall >= nextElProbeMs
+        ) {
             val elRef = runCatching {
-                client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
+                elClient.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
             }.getOrNull()
             nextElProbeMs = SystemClock.elapsedRealtime() + OFFLINE_RETRY_MS
             if (elRef != null) {
                 elFailStreak = 0
                 lastOkPollMs = System.currentTimeMillis()
                 val elType = runCatching {
-                    client.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
+                    elClient.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_OFFLINE_MS)
                 }.getOrNull()
                 val resolvedType = elType ?: profile.cachedElRotorType()
                 rememberElRotorTypeIfChanged(elType)
@@ -1854,7 +2069,7 @@ class RotorRepository(context: android.content.Context) {
                 )
                 _state.value = cur
                 val el = runCatching {
-                    client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                    elClient.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                 }.getOrNull()
                 if (el != null) {
                     elSmoother.setDynamic(true)
@@ -1875,13 +2090,13 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun pollReference() {
-        if (!client.isConnected) return
+        if (!anyLinkUp) return
         if (_state.value.busPassive) return
         // Homing: GETREF muss zuverlässig und zyklisch laufen (Deadman), nicht per tryLock ausfallen
         if (_state.value.homing) {
             ioMutex.withLock {
                 if (_state.value.busPassive) return@withLock
-                client.clearAbortAwait()
+                clearAbortAwaitAll()
         pollReferenceLocked()
             }
             return
@@ -1903,11 +2118,11 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun startHoming(axis: RotorAxis): Boolean = ioMutex.withLock {
-        client.clearAbortAwait()
-        ensureConnected()
+        clearAbortAwaitAll()
+        ensureConnected(axis)
         val dst = if (axis == RotorAxis.EL) profile.slaveEl else profile.slaveAz
         if (axis == RotorAxis.EL && !profile.enableEl) return@withLock false
-        val ok = client.setRef(dst, 1)
+        val ok = clientFor(axis).setRef(dst, 1)
         if (!ok) {
             _state.value = takeBusControl(_state.value).copy(
                 lastLog = "SETREF fehlgeschlagen",
@@ -1956,7 +2171,7 @@ class RotorRepository(context: android.content.Context) {
         if (!online || known || s.homing) return
         val dst = if (axis == RotorAxis.AZ) profile.slaveAz else profile.slaveEl
         val ref = runCatching {
-            client.getRef(dst, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+            clientFor(axis).getRef(dst, timeoutMs = POS_TIMEOUT_ONLINE_MS)
         }.getOrNull() ?: return
         val cur = _state.value
         _state.value = when (axis) {
@@ -1990,7 +2205,7 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun setAzimuth(displayDeg: Double): Boolean = ioMutex.withLock {
-        client.clearAbortAwait()
+        clearAbortAwaitAll()
         ensureConnected()
         ensureRefKnownLocked(RotorAxis.AZ)
         val s = takeBusControl(_state.value)
@@ -2064,7 +2279,7 @@ class RotorRepository(context: android.content.Context) {
                 moving = true,
             )
             }
-        } else if (!client.isAwaitAborted) {
+        } else if (!isAwaitAborted) {
             _state.value = _state.value.copy(
                 lastLog = str(R.string.status_move_az_failed),
                 statusText = str(R.string.status_move_az_failed),
@@ -2078,7 +2293,7 @@ class RotorRepository(context: android.content.Context) {
      * (AZ immer; EL wenn im Profil aktiv — Rotorwinkel, kein Dipol-Offset).
      */
     suspend fun parkAzimuth(): Boolean = ioMutex.withLock {
-        client.clearAbortAwait()
+        clearAbortAwaitAll()
         ensureConnected()
         ensureRefKnownLocked(RotorAxis.AZ)
         if (profile.enableEl) ensureRefKnownLocked(RotorAxis.EL)
@@ -2090,7 +2305,8 @@ class RotorRepository(context: android.content.Context) {
             )
             return@withLock false
         }
-        val wantEl = profile.enableEl
+        // EL-Bridge tot → nur AZ parken, statt am toten Socket zu scheitern.
+        val wantEl = profile.enableEl && elClient.isConnected
         if (wantEl && (!s.elReferenced || s.elHoming)) {
             _state.value = s.copy(
                 lastLog = str(R.string.status_el_unref),
@@ -2111,7 +2327,7 @@ class RotorRepository(context: android.content.Context) {
         }
         val homeEl = if (wantEl) {
             runCatching {
-                client.getHomePos(profile.slaveEl, timeoutMs = 800)
+                elClient.getHomePos(profile.slaveEl, timeoutMs = 800)
             }.getOrNull()
         } else {
             null
@@ -2162,7 +2378,7 @@ class RotorRepository(context: android.content.Context) {
                     moving = true,
                 )
             }
-        } else if (!client.isAwaitAborted) {
+        } else if (!isAwaitAborted) {
             _state.value = _state.value.copy(
                 lastLog = str(R.string.status_park_az_failed),
                 statusText = str(R.string.status_park_az_failed),
@@ -2172,12 +2388,12 @@ class RotorRepository(context: android.content.Context) {
 
         if (targetEl == null) return@withLock okAz
 
-        val okEl = client.setPosDg(profile.slaveEl, targetEl)
+        val okEl = elClient.setPosDg(profile.slaveEl, targetEl)
         if (okEl) {
             elIgnoreCcUntilMs = SystemClock.elapsedRealtime() + SETPOSCC_SUPPRESS_MS
             armSetPosPollGrace()
             val el = runCatching {
-                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                elClient.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
             if (el != null) {
                 elFailStreak = 0
@@ -2192,7 +2408,7 @@ class RotorRepository(context: android.content.Context) {
                     moving = true,
                 )
             }
-        } else if (!client.isAwaitAborted) {
+        } else if (!isAwaitAborted) {
             _state.value = _state.value.copy(
                 lastLog = str(R.string.status_park_el_failed),
                 statusText = str(R.string.status_park_el_failed),
@@ -2202,9 +2418,9 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun setElevation(deg: Double): Boolean = ioMutex.withLock {
-        client.clearAbortAwait()
+        clearAbortAwaitAll()
         if (!profile.enableEl) return@withLock false
-        ensureConnected()
+        ensureConnected(RotorAxis.EL)
         ensureRefKnownLocked(RotorAxis.EL)
         val s = takeBusControl(_state.value)
         if (!s.elReferenced || s.elHoming) {
@@ -2223,13 +2439,13 @@ class RotorRepository(context: android.content.Context) {
             lastLog = "SETPOSDG EL ${"%.1f".format(clamped)}°",
             statusText = faultStatusText(s),
         )
-        val ok = client.setPosDg(profile.slaveEl, clamped)
+        val ok = elClient.setPosDg(profile.slaveEl, clamped)
         if (ok) {
             elIgnoreCcUntilMs = SystemClock.elapsedRealtime() + SETPOSCC_SUPPRESS_MS
             armSetPosPollGrace()
             // Sofort GETPOS auf der Online-Achse — Offline-GETREF darf nicht dazwischen
             val el = runCatching {
-                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                elClient.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
             if (el != null) {
                 elFailStreak = 0
@@ -2244,7 +2460,7 @@ class RotorRepository(context: android.content.Context) {
                 moving = true,
             )
             }
-        } else if (!client.isAwaitAborted) {
+        } else if (!isAwaitAborted) {
             _state.value = _state.value.copy(
                 lastLog = str(R.string.status_move_el_failed),
                 statusText = str(R.string.status_move_el_failed),
@@ -2254,11 +2470,11 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun stopAxis(axis: RotorAxis): Boolean = ioMutex.withLock {
-        client.clearAbortAwait()
-        ensureConnected()
+        clearAbortAwaitAll()
+        ensureConnected(axis)
         if (axis == RotorAxis.EL && !profile.enableEl) return@withLock false
         val dst = if (axis == RotorAxis.EL) profile.slaveEl else profile.slaveAz
-        val ok = client.stop(dst)
+        val ok = clientFor(axis).stop(dst)
         val prev = takeBusControl(_state.value)
         _state.value = when (axis) {
             RotorAxis.AZ -> prev.copy(
@@ -2276,11 +2492,11 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun setPwm(axis: RotorAxis, percent: Int): Boolean = ioMutex.withLock {
-        ensureConnected()
+        ensureConnected(axis)
         if (axis == RotorAxis.EL && !profile.enableEl) return@withLock false
         val dst = if (axis == RotorAxis.EL) profile.slaveEl else profile.slaveAz
         val p = percent.coerceIn(30, 100)
-        val ok = client.setPwm(dst, p)
+        val ok = clientFor(axis).setPwm(dst, p)
         if (ok) {
             _state.value = when (axis) {
                 RotorAxis.AZ -> _state.value.copy(pwmAz = p, lastLog = "SETPWM AZ $p%")
@@ -2296,12 +2512,12 @@ class RotorRepository(context: android.content.Context) {
     }
 
     suspend fun refreshPwm() = ioMutex.withLock {
-        if (!client.isConnected) return@withLock
+        if (!anyLinkUp) return@withLock
         refreshPwmLocked()
     }
 
     suspend fun refreshTemps(): Boolean {
-        if (!client.isConnected) return false
+        if (!anyLinkUp) return false
         if (userCmdPending || idleExtrasDeferred()) return false
         // Warten statt tryLock: Idle-Takt 2 s darf nicht an GETPOS scheitern
         return ioMutex.withLock {
@@ -2457,7 +2673,7 @@ class RotorRepository(context: android.content.Context) {
             null
         }
         val el = if (profile.enableEl && s.elOnline) {
-            runCatching { client.getPwm(profile.slaveEl) }.getOrNull()
+            runCatching { elClient.getPwm(profile.slaveEl) }.getOrNull()
         } else {
             null
         }
@@ -2480,7 +2696,7 @@ class RotorRepository(context: android.content.Context) {
         // Nur Online-Achsen — Offline blockiert den Bus nicht
         val ambient = when {
             s.azOnline -> runCatching { client.getTempA(profile.slaveAz) }.getOrNull()
-            profile.enableEl && s.elOnline -> runCatching { client.getTempA(profile.slaveEl) }.getOrNull()
+            profile.enableEl && s.elOnline -> runCatching { elClient.getTempA(profile.slaveEl) }.getOrNull()
             else -> null
         }
         val motorAz = if (s.azOnline) {
@@ -2489,7 +2705,7 @@ class RotorRepository(context: android.content.Context) {
             null
         }
         val motorEl = if (profile.enableEl && s.elOnline) {
-            runCatching { client.getTempM(profile.slaveEl) }.getOrNull()
+            runCatching { elClient.getTempM(profile.slaveEl) }.getOrNull()
         } else {
             null
         }
@@ -2522,7 +2738,7 @@ class RotorRepository(context: android.content.Context) {
             null
         }
         val elW = if (profile.enableEl && s.elOnline) {
-            runCatching { client.getWarn(profile.slaveEl) }.getOrNull()
+            runCatching { elClient.getWarn(profile.slaveEl) }.getOrNull()
         } else {
             null
         }
@@ -2563,7 +2779,7 @@ class RotorRepository(context: android.content.Context) {
             null
         }
         val elE = if (profile.enableEl && s.elOnline && only != RotorAxis.AZ) {
-            runCatching { client.getErr(profile.slaveEl) }.getOrNull()
+            runCatching { elClient.getErr(profile.slaveEl) }.getOrNull()
         } else {
             null
         }
@@ -2612,7 +2828,7 @@ class RotorRepository(context: android.content.Context) {
         }
         if (profile.enableEl && _state.value.elOnline) {
             val el = runCatching {
-                client.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                elClient.getPosDg(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
             if (el != null) {
                 elFailStreak = 0
@@ -2649,7 +2865,7 @@ class RotorRepository(context: android.content.Context) {
             1
         } else if (before.elOnline || nowWall >= nextElProbeMs) {
             runCatching {
-                client.getRef(
+                elClient.getRef(
                     profile.slaveEl,
                     timeoutMs = if (before.elOnline || elFailStreak == 0) {
                         POS_TIMEOUT_ONLINE_MS
@@ -2738,7 +2954,7 @@ class RotorRepository(context: android.content.Context) {
             elHomingActive && !azHomingActive -> {
                 elAsked = true
                 elRef = runCatching {
-                    client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                    elClient.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                 }.getOrNull()
                 if (before.azOnline) {
                     azAsked = true
@@ -2755,7 +2971,7 @@ class RotorRepository(context: android.content.Context) {
                 if (profile.enableEl && before.elOnline) {
                     elAsked = true
                     elRef = runCatching {
-                        client.getRef(profile.slaveEl, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
+                        elClient.getRef(profile.slaveEl, timeoutMs = SIBLING_KEEPALIVE_TIMEOUT_MS)
                     }.getOrNull()
                 }
             }
@@ -2766,7 +2982,7 @@ class RotorRepository(context: android.content.Context) {
                 }.getOrNull()
                 elAsked = true
                 elRef = runCatching {
-                    client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                    elClient.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                 }.getOrNull()
             }
             else -> {
@@ -2786,7 +3002,7 @@ class RotorRepository(context: android.content.Context) {
                 ) {
                     elAsked = true
                     elRef = runCatching {
-                        client.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                        elClient.getRef(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
                     }.getOrNull()
                 }
             }
@@ -2972,8 +3188,9 @@ class RotorRepository(context: android.content.Context) {
         lastOkPollMs = 0L
     }
 
-    private fun ensureConnected() {
-        check(client.isConnected) { str(R.string.status_not_connected) }
+    /** Die für [axis] zuständige Bridge muss stehen (bei eigener EL-Bridge deren Socket). */
+    private fun ensureConnected(axis: RotorAxis = RotorAxis.AZ) {
+        check(clientFor(axis).isConnected) { str(R.string.status_not_connected) }
     }
 
     /** GETROTORTYPE an AZ/EL — Anzeige zuerst aus Cache, Bus bestätigt/aktualisiert. */
@@ -2985,7 +3202,7 @@ class RotorRepository(context: android.content.Context) {
         queryEndstopsLocked()
         val elType = if (profile.enableEl) {
             runCatching {
-                client.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                elClient.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()
         } else {
             null
@@ -3043,7 +3260,7 @@ class RotorRepository(context: android.content.Context) {
         }
         if (only != RotorAxis.AZ && profile.enableEl && _state.value.elOnline) {
             runCatching {
-                client.getEndStc(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+                elClient.getEndStc(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
             }.getOrNull()?.let { applyEndstop(RotorAxis.EL, it) }
         }
     }

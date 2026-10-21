@@ -372,6 +372,9 @@ class ProfileStore(private val context: Context) {
                         .put("lastAzMaxDeg", p.lastAzMaxDeg)
                         .put("lastAzEndstop", p.lastAzEndstop)
                         .put("lastElEndstop", p.lastElEndstop)
+                        .put("elOwnLink", p.elOwnLink)
+                        .put("elHost", p.elHost)
+                        .put("elPort", p.elPort)
                 )
             }
             return arr.toString()
@@ -395,6 +398,9 @@ class ProfileStore(private val context: Context) {
                                 slaveAz = o.optInt("slaveAz", 20),
                                 enableEl = o.optBoolean("enableEl", false),
                                 slaveEl = o.optInt("slaveEl", 21),
+                                elOwnLink = o.optBoolean("elOwnLink", false),
+                                elHost = o.optString("elHost", "").trim(),
+                                elPort = o.optInt("elPort", 8886).coerceIn(1, 65535),
                                 controllerId = o.optInt("controllerId", 2),
                                 enableWind = o.optBoolean("enableWind", false),
                                 windDirMode = if (o.optString("windDirMode", "from")

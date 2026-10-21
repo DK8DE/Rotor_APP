@@ -11,6 +11,13 @@ data class RotorProfile(
     val slaveAz: Int = 20,
     val enableEl: Boolean = false,
     val slaveEl: Int = 21,
+    /**
+     * EL hängt an einer eigenen Bridge: zweite Verbindung mit [elHost]/[elPort].
+     * Ohne Haken teilen sich beide Achsen den Bus von [host].
+     */
+    val elOwnLink: Boolean = false,
+    val elHost: String = "",
+    val elPort: Int = 8886,
     /** Bus-SRC des Display-/Zweit-Controllers (SETPOSCC), 0 = kein Filter. */
     val controllerId: Int = 2,
     /** Wind am AZ: SETWINDENABLE + Abfrage GETANEMO/GETWINDDIR. */
@@ -41,8 +48,20 @@ data class RotorProfile(
     fun summary(azElLabel: String, azOnlyLabel: String, windSuffix: String): String {
         val el = if (enableEl) azElLabel else azOnlyLabel
         val wind = if (enableWind) " $windSuffix" else ""
-        return "$name · $host:$port · $el$wind"
+        val second = if (elSeparateLink()) " · EL ${elHostEffective()}:${elPortEffective()}" else ""
+        return "$name · $host:$port$second · $el$wind"
     }
+
+    /** EL braucht eine eigene Verbindung (nur wenn sie sich von AZ unterscheidet). */
+    fun elSeparateLink(): Boolean =
+        enableEl && elOwnLink && elHost.isNotBlank() &&
+            !(elHost == host && elPort == port)
+
+    fun elHostEffective(): String =
+        if (elOwnLink && elHost.isNotBlank()) elHost else host
+
+    fun elPortEffective(): Int =
+        if (elOwnLink && elHost.isNotBlank()) elPort else port
 
     /** Anzeige-Maxwinkel aus Cache (ohne Bus-Abfrage). */
     fun cachedElMaxDeg(): Double = if (!enableEl) 90.0 else when (lastElRotorType) {

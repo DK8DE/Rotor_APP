@@ -154,6 +154,10 @@
     <string name="field_controller_id">Panel controller ID</string>
     <string name="checkbox_elevation">Elevation available</string>
     <string name="field_slave_el">Slave EL</string>
+    <string name="checkbox_el_own_link">EL on its own IP</string>
+    <string name="el_own_link_hint">Second bridge for the elevation rotor</string>
+    <string name="field_el_host">IP / host EL</string>
+    <string name="field_el_port">Port EL</string>
     <string name="checkbox_wind">Wind enabled (anemometer)</string>
     <string name="wind_enabled_hint">SETWINDENABLE on AZ · poll only when enabled</string>
     <string name="wind_arrow_heading">Wind arrow shows</string>
