@@ -693,32 +693,39 @@ private fun QuickSettingsPage(
                 .height(40.dp),
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BridgeButton(
-                text = stringResource(R.string.btn_home_az),
-                onClick = onHomeAz,
-                enabled = connected && !state.rotor.azHoming,
-                compact = true,
+        // Ohne Endschalter (GETENDSTC = 0) kann die Achse nicht referenzieren.
+        val homeAz = state.rotor.azHasEndstop
+        val homeEl = elevationEnabled && state.rotor.elHasEndstop
+        if (homeAz || homeEl) {
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
-            if (elevationEnabled) {
-                BridgeButton(
-                    text = stringResource(R.string.btn_home_el),
-                    onClick = onHomeEl,
-                    enabled = connected && !state.rotor.elHoming,
-                    compact = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                )
+                    .fillMaxWidth()
+                    .height(40.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (homeAz) {
+                    BridgeButton(
+                        text = stringResource(R.string.btn_home_az),
+                        onClick = onHomeAz,
+                        enabled = connected && !state.rotor.azHoming,
+                        compact = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
+                if (homeEl) {
+                    BridgeButton(
+                        text = stringResource(R.string.btn_home_el),
+                        onClick = onHomeEl,
+                        enabled = connected && !state.rotor.elHoming,
+                        compact = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
             }
         }
     }

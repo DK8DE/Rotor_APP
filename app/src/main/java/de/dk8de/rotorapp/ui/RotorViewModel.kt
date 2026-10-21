@@ -162,6 +162,11 @@ class RotorViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { store.upsert(cached, makeActive = false) }
             }
         }
+        repo.onEndstopCached = { cached ->
+            viewModelScope.launch {
+                runCatching { store.upsert(cached, makeActive = false) }
+            }
+        }
         repo.onWindEnableSynced = { synced ->
             viewModelScope.launch {
                 runCatching { store.upsert(synced, makeActive = false) }

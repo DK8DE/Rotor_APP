@@ -155,6 +155,20 @@ class RotorClient(
         return Rs485Protocol.parseDegree(ack.params)
     }
 
+    /**
+     * Endschalter vorhanden (GETENDSTC).
+     *
+     * Nur 0 heißt „keine“ — 1 und 2 sind Bauarten mit Endschaltern, beide
+     * können homen. Daher bewusst gegen 0 geprüft und nicht auf 1.
+     */
+    suspend fun getEndStc(dst: Int, timeoutMs: Long = 800): Boolean? {
+        val frame = Rs485Protocol.build(masterId, dst, "GETENDSTC", "0")
+        val ack = sendAndAwait(frame, "ACK_GETENDSTC", "NAK_GETENDSTC", timeoutMs = timeoutMs)
+            ?: return null
+        if (ack.cmd.startsWith("NAK")) return null
+        return Rs485Protocol.parseDegree(ack.params)?.let { it.toInt() != 0 }
+    }
+
     /** Warnungen abfragen (`0` oder `id;id;…`). */
     suspend fun getWarn(dst: Int, timeoutMs: Long = 800): List<Int>? {
         val frame = Rs485Protocol.build(masterId, dst, "GETWARN", "0")

@@ -30,6 +30,13 @@ data class RotorProfile(
      * damit die erste Fahrt schon den kürzeren Weg über 360° nehmen kann.
      */
     val lastAzMaxDeg: Double = 360.0,
+    /**
+     * Zuletzt gelesener Endschalter-Zustand je Achse (GETENDSTC).
+     * Ohne Endschalter gibt es kein Homing — der Button bleibt dann weg,
+     * schon bevor die erste Antwort da ist.
+     */
+    val lastAzEndstop: Boolean = true,
+    val lastElEndstop: Boolean = true,
 ) {
     fun summary(azElLabel: String, azOnlyLabel: String, windSuffix: String): String {
         val el = if (enableEl) azElLabel else azOnlyLabel

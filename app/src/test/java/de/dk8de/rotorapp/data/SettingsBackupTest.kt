@@ -24,6 +24,8 @@ class SettingsBackupTest {
             windDirMode = "to",
             lastElRotorType = 3,
             lastAzMaxDeg = 430.0,
+            lastAzEndstop = false,
+            lastElEndstop = true,
         ),
         RotorProfile(id = "p2", name = "Vertikal", host = "10.0.0.5", port = 1234),
     )

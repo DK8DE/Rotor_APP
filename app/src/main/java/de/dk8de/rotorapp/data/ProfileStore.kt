@@ -370,6 +370,8 @@ class ProfileStore(private val context: Context) {
                         .put("windDirMode", if (p.windDirMode.equals("to", true)) "to" else "from")
                         .put("lastElRotorType", p.lastElRotorType)
                         .put("lastAzMaxDeg", p.lastAzMaxDeg)
+                        .put("lastAzEndstop", p.lastAzEndstop)
+                        .put("lastElEndstop", p.lastElEndstop)
                 )
             }
             return arr.toString()
@@ -405,6 +407,8 @@ class ProfileStore(private val context: Context) {
                                 lastElRotorType = o.optInt("lastElRotorType", 2).coerceIn(2, 3),
                                 lastAzMaxDeg = o.optDouble("lastAzMaxDeg", 360.0)
                                     .coerceIn(360.0, 1080.0),
+                                lastAzEndstop = o.optBoolean("lastAzEndstop", true),
+                                lastElEndstop = o.optBoolean("lastElEndstop", true),
                             )
                         )
                     }

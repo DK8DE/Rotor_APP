@@ -90,6 +90,12 @@ data class RotorLiveState(
      * fahren weiter (z. B. 430), dort ist 400° dieselbe Peilung wie 40°.
      */
     val azMaxDeg: Double = 360.0,
+    /**
+     * Endschalter vorhanden (GETENDSTC). Ohne sie gibt es kein Homing.
+     * Ohne Antwort bleibt es bei „vorhanden“ — alte Firmware verliert nichts.
+     */
+    val azHasEndstop: Boolean = true,
+    val elHasEndstop: Boolean = true,
     /** Gelatchter Fehlercode (Broadcast ERR / ACK_GETERR), 0 = keiner. */
     val azErrorCode: Int = 0,
     val elErrorCode: Int = 0,
@@ -362,6 +368,8 @@ class RotorRepository(context: android.content.Context) {
     var onElRotorTypeCached: ((RotorProfile) -> Unit)? = null
     /** Wenn GETMAXDG einen anderen AZ-Fahrbereich liefert: Profil-Cache speichern. */
     var onAzMaxDegCached: ((RotorProfile) -> Unit)? = null
+    /** Wenn GETENDSTC einen anderen Endschalter-Zustand liefert: Profil-Cache speichern. */
+    var onEndstopCached: ((RotorProfile) -> Unit)? = null
     /** Wind enable aus GETWINDENABLE → Profil/Haken anpassen. */
     var onWindEnableSynced: ((RotorProfile) -> Unit)? = null
 
@@ -582,6 +590,8 @@ class RotorRepository(context: android.content.Context) {
             elRotorType = p.cachedElRotorType(),
             elMaxDeg = p.cachedElMaxDeg(),
             azMaxDeg = p.cachedAzMaxDeg(),
+            azHasEndstop = p.lastAzEndstop,
+            elHasEndstop = p.lastElEndstop,
             azErrorCode = 0,
             elErrorCode = 0,
             azWarnIds = emptyList(),
@@ -629,7 +639,9 @@ class RotorRepository(context: android.content.Context) {
                 azRotorType = 1,
                 elRotorType = profile.cachedElRotorType(),
                 elMaxDeg = profile.cachedElMaxDeg(),
-            azMaxDeg = profile.cachedAzMaxDeg(),
+                azMaxDeg = profile.cachedAzMaxDeg(),
+                azHasEndstop = profile.lastAzEndstop,
+                elHasEndstop = profile.lastElEndstop,
                 azErrorCode = 0,
                 elErrorCode = 0,
                 azWarnIds = emptyList(),
@@ -681,7 +693,9 @@ class RotorRepository(context: android.content.Context) {
                 azRotorType = 1,
                 elRotorType = profile.cachedElRotorType(),
                 elMaxDeg = profile.cachedElMaxDeg(),
-            azMaxDeg = profile.cachedAzMaxDeg(),
+                azMaxDeg = profile.cachedAzMaxDeg(),
+                azHasEndstop = profile.lastAzEndstop,
+                elHasEndstop = profile.lastElEndstop,
                 azErrorCode = 0,
                 elErrorCode = 0,
                 azWarnIds = emptyList(),
@@ -729,6 +743,8 @@ class RotorRepository(context: android.content.Context) {
             elRotorType = profile.cachedElRotorType(),
             elMaxDeg = profile.cachedElMaxDeg(),
             azMaxDeg = profile.cachedAzMaxDeg(),
+            azHasEndstop = profile.lastAzEndstop,
+            elHasEndstop = profile.lastElEndstop,
             azErrorCode = 0,
             elErrorCode = 0,
             azWarnIds = emptyList(),
@@ -1803,6 +1819,7 @@ class RotorRepository(context: android.content.Context) {
                 runCatching { refreshAntennasLocked() }
                 runCatching { refreshErrorsLocked(only = RotorAxis.AZ) }
                 runCatching { queryAzMaxDegLocked() }
+                runCatching { queryEndstopsLocked(only = RotorAxis.AZ) }
             }
         }
 
@@ -1852,6 +1869,7 @@ class RotorRepository(context: android.content.Context) {
                     )
                 }
                 runCatching { refreshErrorsLocked(only = RotorAxis.EL) }
+                runCatching { queryEndstopsLocked(only = RotorAxis.EL) }
             }
         }
     }
@@ -2964,6 +2982,7 @@ class RotorRepository(context: android.content.Context) {
             client.getRotorType(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
         }.getOrNull()
         queryAzMaxDegLocked()
+        queryEndstopsLocked()
         val elType = if (profile.enableEl) {
             runCatching {
                 client.getRotorType(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
@@ -3010,6 +3029,41 @@ class RotorRepository(context: android.content.Context) {
             azMaxDeg = clamped,
             lastLog = "GETMAXDG AZ=${"%.0f".format(clamped)}°",
         )
+    }
+
+    /**
+     * GETENDSTC je Achse — ohne Endschalter kann die Achse nicht referenzieren.
+     * Ohne Antwort bleibt der Cache stehen (Homing bleibt dann bedienbar).
+     */
+    private suspend fun queryEndstopsLocked(only: RotorAxis? = null) {
+        if (only != RotorAxis.EL && _state.value.azOnline) {
+            runCatching {
+                client.getEndStc(profile.slaveAz, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+            }.getOrNull()?.let { applyEndstop(RotorAxis.AZ, it) }
+        }
+        if (only != RotorAxis.AZ && profile.enableEl && _state.value.elOnline) {
+            runCatching {
+                client.getEndStc(profile.slaveEl, timeoutMs = POS_TIMEOUT_ONLINE_MS)
+            }.getOrNull()?.let { applyEndstop(RotorAxis.EL, it) }
+        }
+    }
+
+    private fun applyEndstop(axis: RotorAxis, has: Boolean) {
+        val prev = _state.value
+        _state.value = when (axis) {
+            RotorAxis.AZ -> prev.copy(azHasEndstop = has)
+            RotorAxis.EL -> prev.copy(elHasEndstop = has)
+        }.copy(lastLog = "GETENDSTC $axis ${if (has) 1 else 0}")
+        rememberEndstopIfChanged(axis, has)
+    }
+
+    private fun rememberEndstopIfChanged(axis: RotorAxis, has: Boolean) {
+        val next = when (axis) {
+            RotorAxis.AZ -> if (profile.lastAzEndstop == has) null else profile.copy(lastAzEndstop = has)
+            RotorAxis.EL -> if (profile.lastElEndstop == has) null else profile.copy(lastElEndstop = has)
+        } ?: return
+        profile = next
+        onEndstopCached?.invoke(next)
     }
 
     private fun rememberAzMaxDegIfChanged(max: Double) {
